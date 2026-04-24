@@ -2,6 +2,7 @@ import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import { analyzeProjectDependencies } from '../src/lib/analyzer'
 import type { SourceFileRecord, TsConfigAliasConfig } from '../src/lib/models'
+import { dirname, joinPath, normalizePath } from '../src/lib/path-utils'
 
 const IGNORED_DIRECTORIES = new Set(['node_modules', '.git', 'dist', 'build', '.next', '.turbo'])
 const TARGET_EXTENSIONS = ['.ts', '.tsx']
@@ -57,21 +58,96 @@ async function collectSourceFiles(repoPath: string): Promise<SourceFileRecord[]>
 }
 
 async function readAliasConfig(repoPath: string): Promise<TsConfigAliasConfig | null> {
-  try {
-    const tsconfigText = await fs.readFile(path.join(repoPath, 'tsconfig.json'), 'utf8')
-    const rawConfig = JSON.parse(tsconfigText) as {
-      compilerOptions?: { baseUrl?: string; paths?: Record<string, string[]> }
+  const MAX_EXTENDS_DEPTH = 8
+  const visited = new Set<string>()
+
+  type TsConfigRoot = {
+    extends?: string
+    compilerOptions?: {
+      baseUrl?: string
+      paths?: Record<string, string[]>
     }
-    const compilerOptions = rawConfig.compilerOptions ?? {}
-    const hasBaseUrl = typeof compilerOptions.baseUrl === 'string' && compilerOptions.baseUrl.length > 0
-    const hasPaths = !!compilerOptions.paths && Object.keys(compilerOptions.paths).length > 0
-    if (!hasBaseUrl && !hasPaths) {
+  }
+
+  function resolveExtendsPath(currentConfigPath: string, extendsValue: string) {
+    if (!extendsValue.startsWith('.') && !extendsValue.startsWith('/')) {
       return null
     }
-    return {
-      baseUrl: hasBaseUrl ? compilerOptions.baseUrl : undefined,
-      paths: hasPaths ? compilerOptions.paths : undefined,
+    let resolved = extendsValue.startsWith('/')
+      ? normalizePath(extendsValue.slice(1))
+      : joinPath(dirname(currentConfigPath), extendsValue)
+    if (!resolved.endsWith('.json')) {
+      resolved = `${resolved}.json`
     }
+    return resolved
+  }
+
+  function mergePathMappings(
+    parentPaths: Record<string, string[]> | undefined,
+    localPaths: Record<string, string[]> | undefined,
+  ) {
+    const merged: Record<string, string[]> = {}
+    for (const [key, value] of Object.entries(parentPaths ?? {})) {
+      merged[key] = [...value]
+    }
+    for (const [key, value] of Object.entries(localPaths ?? {})) {
+      merged[key] = [...value]
+    }
+    return Object.keys(merged).length > 0 ? merged : undefined
+  }
+
+  async function readConfig(configPath: string, depth: number): Promise<TsConfigAliasConfig | null> {
+    if (depth > MAX_EXTENDS_DEPTH) {
+      return null
+    }
+
+    const normalizedConfigPath = normalizePath(configPath)
+    if (visited.has(normalizedConfigPath)) {
+      return null
+    }
+    visited.add(normalizedConfigPath)
+
+    let configText = ''
+    try {
+      configText = await fs.readFile(path.join(repoPath, normalizedConfigPath), 'utf8')
+    } catch {
+      return null
+    }
+
+    let rawConfig: TsConfigRoot
+    try {
+      rawConfig = JSON.parse(configText) as TsConfigRoot
+    } catch {
+      return null
+    }
+
+    let inherited: TsConfigAliasConfig | null = null
+    if (typeof rawConfig.extends === 'string') {
+      const extendsPath = resolveExtendsPath(normalizedConfigPath, rawConfig.extends)
+      if (extendsPath) {
+        inherited = await readConfig(extendsPath, depth + 1)
+      }
+    }
+
+    const compilerOptions = rawConfig.compilerOptions ?? {}
+    const localBaseUrl = typeof compilerOptions.baseUrl === 'string' && compilerOptions.baseUrl.length > 0
+      ? joinPath(path.basename(repoPath), joinPath(dirname(normalizedConfigPath), compilerOptions.baseUrl))
+      : undefined
+    const mergedBaseUrl = localBaseUrl ?? inherited?.baseUrl
+    const mergedPaths = mergePathMappings(inherited?.paths, compilerOptions.paths)
+
+    if (!mergedBaseUrl && !mergedPaths) {
+      return null
+    }
+
+    return {
+      baseUrl: mergedBaseUrl,
+      paths: mergedPaths,
+    }
+  }
+
+  try {
+    return await readConfig('tsconfig.json', 0)
   } catch {
     return null
   }

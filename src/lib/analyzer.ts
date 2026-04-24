@@ -158,7 +158,11 @@ function resolveAliasImport(
   const aliasConfig = options.tsconfigAliases
   const rootPrefix = options.rootName
   const baseUrl = aliasConfig?.baseUrl?.trim() || ''
-  const baseRootPath = baseUrl ? joinPath(rootPrefix, baseUrl) : rootPrefix
+  const baseRootPath = !baseUrl
+    ? rootPrefix
+    : baseUrl === rootPrefix || baseUrl.startsWith(`${rootPrefix}/`)
+      ? baseUrl
+      : joinPath(rootPrefix, baseUrl)
 
   if (aliasConfig?.paths) {
     for (const [pattern, targetPatterns] of Object.entries(aliasConfig.paths)) {

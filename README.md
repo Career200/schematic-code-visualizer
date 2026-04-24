@@ -56,6 +56,12 @@ Example:
 npm run smoke -- .\smoke-repos\zustand .\smoke-repos\tsup .\smoke-repos\nanostores
 ```
 
+Alias/extends fixture check:
+
+```bash
+npm run smoke -- .\smoke-fixtures\alias-extends
+```
+
 ## Browser Notes
 
 For folder selection, use a Chromium-based browser (Chrome/Edge) because this MVP relies on the File System Access API.
