@@ -31,6 +31,7 @@ export type DependencyEdge = {
   fromPath: string
   toPath: string
   specifier: string
+  kind: 'runtime' | 'type' | 're-export'
 }
 
 export type DependencyGraph = {

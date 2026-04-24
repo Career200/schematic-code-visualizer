@@ -18,7 +18,7 @@ import {
   type GraphBuildMode,
   type RoutingStyle,
 } from './lib/graph-builder'
-import type { DependencyGraph, FileAnalysis, ScannedProject } from './lib/models'
+import type { DependencyEdge, DependencyGraph, FileAnalysis, ScannedProject } from './lib/models'
 import { scanProjectFolder } from './lib/scanner'
 import { readTsConfigAliasConfig } from './lib/tsconfig-reader'
 import { buildTreeLines } from './lib/tree-view'
@@ -29,6 +29,87 @@ type AppTab = 'overview' | 'board' | 'dependencies' | 'diagnostics' | 'about'
 type BusDisplayMode = 'detailed' | 'trunk-only'
 type FolderControlMode = 'preset' | 'manual'
 type ManualFolderDepth = 'any' | number
+type EdgeKindFilter = 'all' | DependencyEdge['kind']
+type EdgeColorPriority = 'direction' | 'kind'
+type CycleGroup = {
+  id: number
+  size: number
+  filePaths: string[]
+}
+
+function findTopCycleGroups(filePaths: string[], edges: Array<{ fromPath: string; toPath: string }>, limit = 5): CycleGroup[] {
+  const pathSet = new Set(filePaths)
+  const adjacency = new Map<string, string[]>()
+  const selfLoops = new Set<string>()
+
+  for (const path of filePaths) {
+    adjacency.set(path, [])
+  }
+
+  for (const edge of edges) {
+    if (!pathSet.has(edge.fromPath) || !pathSet.has(edge.toPath)) {
+      continue
+    }
+    adjacency.get(edge.fromPath)?.push(edge.toPath)
+    if (edge.fromPath === edge.toPath) {
+      selfLoops.add(edge.fromPath)
+    }
+  }
+
+  let index = 0
+  const stack: string[] = []
+  const inStack = new Set<string>()
+  const indexByNode = new Map<string, number>()
+  const lowlinkByNode = new Map<string, number>()
+  const groups: CycleGroup[] = []
+
+  const strongConnect = (node: string) => {
+    indexByNode.set(node, index)
+    lowlinkByNode.set(node, index)
+    index += 1
+    stack.push(node)
+    inStack.add(node)
+
+    for (const next of adjacency.get(node) ?? []) {
+      if (!indexByNode.has(next)) {
+        strongConnect(next)
+        lowlinkByNode.set(node, Math.min(lowlinkByNode.get(node) ?? 0, lowlinkByNode.get(next) ?? 0))
+      } else if (inStack.has(next)) {
+        lowlinkByNode.set(node, Math.min(lowlinkByNode.get(node) ?? 0, indexByNode.get(next) ?? 0))
+      }
+    }
+
+    if ((lowlinkByNode.get(node) ?? -1) === (indexByNode.get(node) ?? -2)) {
+      const component: string[] = []
+      let popped: string | undefined
+      do {
+        popped = stack.pop()
+        if (!popped) {
+          break
+        }
+        inStack.delete(popped)
+        component.push(popped)
+      } while (popped !== node)
+
+      const hasCycle = component.length > 1 || selfLoops.has(component[0])
+      if (hasCycle) {
+        groups.push({
+          id: groups.length + 1,
+          size: component.length,
+          filePaths: [...component].sort((left, right) => left.localeCompare(right)),
+        })
+      }
+    }
+  }
+
+  for (const path of filePaths) {
+    if (!indexByNode.has(path)) {
+      strongConnect(path)
+    }
+  }
+
+  return groups.sort((left, right) => right.size - left.size || left.id - right.id).slice(0, limit)
+}
 
 function App() {
   const [activeTab, setActiveTab] = useState<AppTab>('overview')
@@ -45,6 +126,8 @@ function App() {
   const [highlightCycles, setHighlightCycles] = useState(false)
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null)
   const [directionFilter, setDirectionFilter] = useState<'all' | 'incoming' | 'outgoing'>('all')
+  const [edgeKindFilter, setEdgeKindFilter] = useState<EdgeKindFilter>('all')
+  const [edgeColorPriority, setEdgeColorPriority] = useState<EdgeColorPriority>('direction')
   const [searchQuery, setSearchQuery] = useState('')
   const [collapsedBlockIds, setCollapsedBlockIds] = useState<Set<string>>(new Set())
   const [autoFolderDepth, setAutoFolderDepth] = useState(true)
@@ -93,6 +176,72 @@ function App() {
     }
     return map
   }, [dependencyGraph])
+  const incomingEdgeCountByPath = useMemo(() => {
+    const map = new Map<string, number>()
+    for (const edge of dependencyGraph?.edges ?? []) {
+      map.set(edge.toPath, (map.get(edge.toPath) ?? 0) + 1)
+    }
+    return map
+  }, [dependencyGraph])
+  const outgoingEdgeCountByPath = useMemo(() => {
+    const map = new Map<string, number>()
+    for (const edge of dependencyGraph?.edges ?? []) {
+      map.set(edge.fromPath, (map.get(edge.fromPath) ?? 0) + 1)
+    }
+    return map
+  }, [dependencyGraph])
+  const hotspotFiles = useMemo(() => {
+    if (!dependencyGraph) {
+      return []
+    }
+    return dependencyGraph.files
+      .map((file) => {
+        const incoming = incomingEdgeCountByPath.get(file.path) ?? 0
+        const outgoing = outgoingEdgeCountByPath.get(file.path) ?? 0
+        const loc = fileLocByPath.get(file.path) ?? 0
+        const score = incoming * 2 + outgoing + Math.round(loc / 180)
+        return {
+          path: file.path,
+          incoming,
+          outgoing,
+          exports: file.exports.length,
+          loc,
+          score,
+        }
+      })
+      .sort((left, right) => right.score - left.score || left.path.localeCompare(right.path))
+      .slice(0, 10)
+  }, [dependencyGraph, fileLocByPath, incomingEdgeCountByPath, outgoingEdgeCountByPath])
+  const potentiallyDeadExportFiles = useMemo(() => {
+    if (!dependencyGraph) {
+      return []
+    }
+    return dependencyGraph.files
+      .filter((file) => file.exports.length > 0 && (incomingEdgeCountByPath.get(file.path) ?? 0) === 0)
+      .sort((left, right) => right.exports.length - left.exports.length || left.path.localeCompare(right.path))
+      .slice(0, 12)
+  }, [dependencyGraph, incomingEdgeCountByPath])
+  const topCycleGroups = useMemo(() => {
+    if (!dependencyGraph) {
+      return []
+    }
+    return findTopCycleGroups(
+      dependencyGraph.files.map((file) => file.path),
+      dependencyGraph.edges.map((edge) => ({ fromPath: edge.fromPath, toPath: edge.toPath })),
+      5,
+    )
+  }, [dependencyGraph])
+  const dependencyEdgeKindCounts = useMemo(() => {
+    const counts: Record<DependencyEdge['kind'], number> = {
+      runtime: 0,
+      type: 0,
+      're-export': 0,
+    }
+    for (const edge of dependencyGraph?.edges ?? []) {
+      counts[edge.kind] += 1
+    }
+    return counts
+  }, [dependencyGraph])
 
   const flowGraph = useMemo(() => {
     if (!scanResult || !dependencyGraph) {
@@ -102,8 +251,9 @@ function App() {
       highlightCycles,
       routingStyle,
       folderPacking,
+      edgeKindFilter,
     })
-  }, [scanResult, dependencyGraph, graphMode, highlightCycles, routingStyle, folderPacking])
+  }, [scanResult, dependencyGraph, graphMode, highlightCycles, routingStyle, folderPacking, edgeKindFilter])
 
   const fileNodeToBlockId = useMemo(() => {
     const map = new Map<string, string>()
@@ -296,7 +446,7 @@ function App() {
   ])
 
   const displayEdges = useMemo<Edge[]>(() => {
-    const edgeRenderToken = `${routingStyle}|${busDisplayMode}|${selectedNodeId ?? 'none'}|${directionFilter}`
+    const edgeRenderToken = `${routingStyle}|${busDisplayMode}|${selectedNodeId ?? 'none'}|${directionFilter}|${edgeColorPriority}`
     const nodeById = new Map(visibleNodes.map((node) => [node.id, node]))
     const parentById = new Map<string, string>()
     for (const node of visibleNodes) {
@@ -586,20 +736,29 @@ function App() {
       const isOutgoing = selectedNodeId ? edge.source === selectedNodeId : false
       const isConnected = isIncoming || isOutgoing
 
-      let color = '#7ea3bd'
+      const dependencyKind = edge.data?.dependencyKind as DependencyEdge['kind'] | undefined
+      const kindColor = dependencyKind === 'type' ? '#b792ff' : dependencyKind === 're-export' ? '#59ccff' : '#7ea3bd'
+      let color = kindColor
       let strokeWidth = Math.max(Number(edge.style?.strokeWidth ?? 0), 1.4)
+      const isCycleColored = String(edge.style?.stroke ?? '').startsWith('#ff')
 
       if (selectedNodeId && isConnected) {
-        if (isOutgoing && !isIncoming) {
-          color = '#f5b04d'
-        } else if (isIncoming && !isOutgoing) {
-          color = '#6fdc9a'
+        if (edgeColorPriority === 'direction') {
+          if (isOutgoing && !isIncoming) {
+            color = '#f5b04d'
+          } else if (isIncoming && !isOutgoing) {
+            color = '#6fdc9a'
+          } else {
+            color = '#ffe79f'
+          }
         } else {
-          color = '#ffe79f'
+          color = kindColor
         }
         strokeWidth = Math.max(strokeWidth, 2)
-      } else if (String(edge.style?.stroke ?? '').startsWith('#ff')) {
+      } else if (isCycleColored) {
         color = String(edge.style?.stroke)
+      } else {
+        color = kindColor
       }
 
       const baseEdge: Edge = {
@@ -693,7 +852,18 @@ function App() {
         },
       }
     })
-  }, [visibleEdges, visibleNodes, fileNodeToBlockId, flowGraph, hiddenNodeIds, routingStyle, busDisplayMode, selectedNodeId, directionFilter])
+  }, [
+    visibleEdges,
+    visibleNodes,
+    fileNodeToBlockId,
+    flowGraph,
+    hiddenNodeIds,
+    routingStyle,
+    busDisplayMode,
+    selectedNodeId,
+    directionFilter,
+    edgeColorPriority,
+  ])
 
 
   useEffect(() => {
@@ -741,6 +911,8 @@ function App() {
     setCollapsedBlockIds(new Set())
     setAutoFolderDepth(true)
     setFolderControlMode('preset')
+    setEdgeKindFilter('all')
+    setEdgeColorPriority('direction')
     setSearchQuery('')
     setHoveredFilePath(null)
     setIsCanvasLocked(false)
@@ -1203,10 +1375,50 @@ function App() {
             <p>
               <strong>Layout Status:</strong> {isLayouting ? 'running' : 'ready'}
             </p>
+            <h2>Code Health (MVP)</h2>
+            <p>
+              <strong>Hotspots:</strong> {hotspotFiles.length}
+            </p>
+            <p>
+              <strong>Potential dead export files:</strong> {potentiallyDeadExportFiles.length}
+            </p>
+            <p>
+              <strong>Cycle groups:</strong> {topCycleGroups.length}
+            </p>
+            <p>
+              <strong>Edge kinds:</strong> runtime {dependencyEdgeKindCounts.runtime}, type {dependencyEdgeKindCounts.type},
+              re-export {dependencyEdgeKindCounts['re-export']}
+            </p>
           </div>
           <div className="tree">
-            <h2>Selection / Hover</h2>
+            <h2>Code Health Details</h2>
             <pre>
+              Hotspots (score = in*2 + out + LOC factor):
+              {hotspotFiles.length > 0
+                ? `\n${hotspotFiles
+                    .map(
+                      (item) =>
+                        `- ${item.path} | score=${item.score} | in=${item.incoming} | out=${item.outgoing} | loc=${item.loc}`,
+                    )
+                    .join('\n')}`
+                : '\n- no data'}
+              {'\n\n'}
+              Potential dead export files (no internal incoming edges):
+              {potentiallyDeadExportFiles.length > 0
+                ? `\n${potentiallyDeadExportFiles
+                    .map((file) => `- ${file.path} | exports=${file.exports.length} | symbols=${file.exports.join(', ')}`)
+                    .join('\n')}`
+                : '\n- no candidates'}
+              {'\n\n'}
+              Top cycle groups:
+              {topCycleGroups.length > 0
+                ? `\n${topCycleGroups
+                    .map((group) => `- cycle-${group.id} | size=${group.size} | ${group.filePaths.join(' -> ')}`)
+                    .join('\n')}`
+                : '\n- no cycles'}
+              {'\n\n'}
+              Selection / Hover:
+              {'\n'}
               {selectedNodeId ? `Selected: ${selectedNodeId}\n` : 'Selected: -\n'}
               {hoveredFilePath ? `Hover: ${hoveredFilePath}\n` : 'Hover: -\n'}
               {hoveredFileAnalysis
@@ -1260,6 +1472,25 @@ function App() {
                   <option value="all">all</option>
                   <option value="incoming">incoming</option>
                   <option value="outgoing">outgoing</option>
+                </select>
+              </label>
+              <label className="toggle-row">
+                Edge type
+                <select value={edgeKindFilter} onChange={(event) => setEdgeKindFilter(event.target.value as EdgeKindFilter)}>
+                  <option value="all">all</option>
+                  <option value="runtime">runtime</option>
+                  <option value="type">type</option>
+                  <option value="re-export">re-export</option>
+                </select>
+              </label>
+              <label className="toggle-row">
+                Color priority
+                <select
+                  value={edgeColorPriority}
+                  onChange={(event) => setEdgeColorPriority(event.target.value as EdgeColorPriority)}
+                >
+                  <option value="direction">direction</option>
+                  <option value="kind">kind</option>
                 </select>
               </label>
               <label className="toggle-row">
@@ -1377,18 +1608,26 @@ function App() {
             <div className="board-legend">
               <span className="legend-item">
                 <span className="legend-swatch legend-swatch-neutral" />
-                Neutral edge
+                Runtime edge
+              </span>
+              <span className="legend-item">
+                <span className="legend-swatch legend-swatch-type" />
+                Type edge
+              </span>
+              <span className="legend-item">
+                <span className="legend-swatch legend-swatch-reexport" />
+                Re-export edge
               </span>
               <span className="legend-item">
                 <span className="legend-swatch legend-swatch-import" />
-                Incoming (import)
+                Incoming (selected)
               </span>
               <span className="legend-item">
                 <span className="legend-swatch legend-swatch-export" />
-                Outgoing (export)
+                Outgoing (selected)
               </span>
               <span className="legend-note">
-                Colors are directional when selected; `trunk-only` keeps channels aggregated.
+                `Color priority` controls whether selected edges keep kind colors or switch to direction colors.
               </span>
             </div>
           </div>
@@ -1404,7 +1643,9 @@ function App() {
                 <div className="canvas-shell">
                   <ReactFlow
                     key={`rf-${graphMode}-${routingStyle}-${busDisplayMode}-${folderPacking}-${
-                      routingStyle === 'classic' ? `${selectedNodeId ?? 'none'}-${directionFilter}` : 'stable'
+                      routingStyle === 'classic'
+                        ? `${selectedNodeId ?? 'none'}-${directionFilter}-${edgeKindFilter}-${edgeColorPriority}`
+                        : `stable-${edgeKindFilter}-${edgeColorPriority}`
                     }`}
                     nodes={visibleNodes}
                     edges={displayEdges}

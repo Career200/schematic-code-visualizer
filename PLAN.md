@@ -105,3 +105,36 @@ Build a web app that analyzes a selected TypeScript project folder and visualize
 ## Post-MVP Focus
 - Improve resolver for repo-specific internal unresolved patterns.
 - Continue UI polish (readability, interaction ergonomics, visual hierarchy).
+
+## Post-MVP Roadmap (Code Analysis Expansion)
+
+### Phase 1 — Code Health (MVP)
+- Add a compact **Code Health** section in `Diagnostics`:
+  - Hotspots (highest fan-in/fan-out + LOC-weighted signal)
+  - Potential dead exports (exporting files without internal consumers)
+  - Top cycles (largest SCC groups)
+- Keep this phase read-only with simple lists and counters.
+
+### Phase 2 — Dependency Quality
+- Classify edges by intent:
+  - runtime import
+  - type-only import
+  - re-export
+  - dynamic import (best-effort)
+- Add filters for edge type and severity.
+- Add simple “risk score” per file/block.
+
+### Phase 3 — Architecture Rules
+- Introduce configurable layers/zones (`ui`, `domain`, `infra`, etc.).
+- Validate dependency direction rules and show violations.
+- Provide quick jump from violation -> file(s) in Board view.
+
+### Phase 4 — Refactor Signals
+- Duplicate utility candidates (name/path/content heuristics).
+- Orphan module detection (no incoming, no runtime side effects heuristics).
+- Re-export chains and facade bottleneck detection.
+
+### Phase 5 — Change Intelligence (Optional)
+- Git-aware hotspot overlay (churn + dependency centrality).
+- Compare two refs/branches and show structural diff in graph.
+- Export report (`JSON`/`Markdown`) for CI artifact usage.

@@ -385,6 +385,14 @@ button:disabled {
   background: #7ea3bd;
 }
 
+.legend-swatch-type {
+  background: #b792ff;
+}
+
+.legend-swatch-reexport {
+  background: #59ccff;
+}
+
 .canvas-meta {
   color: #b7d4ea;
   margin: 8px 0 12px;

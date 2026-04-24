@@ -14,6 +14,11 @@ type ResolvedImport = {
   viaAlias: boolean
 }
 
+type ImportReference = {
+  specifier: string
+  kind: DependencyEdge['kind']
+}
+
 function scriptKindFromPath(path: string) {
   return path.endsWith('.tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS
 }
@@ -34,7 +39,7 @@ function addExportedBindingNames(list: string[], declarationList: ts.VariableDec
   }
 }
 
-function collectFileAnalysis(file: SourceFileRecord): { imports: string[]; exports: string[] } {
+function collectFileAnalysis(file: SourceFileRecord): { imports: ImportReference[]; exports: string[] } {
   const sourceFile = ts.createSourceFile(
     file.path,
     file.content,
@@ -43,17 +48,23 @@ function collectFileAnalysis(file: SourceFileRecord): { imports: string[]; expor
     scriptKindFromPath(file.path),
   )
 
-  const imports: string[] = []
+  const imports: ImportReference[] = []
   const exports: string[] = []
 
   function visit(node: ts.Node) {
     if (ts.isImportDeclaration(node) && ts.isStringLiteral(node.moduleSpecifier)) {
-      imports.push(node.moduleSpecifier.text)
+      imports.push({
+        specifier: node.moduleSpecifier.text,
+        kind: node.importClause?.isTypeOnly ? 'type' : 'runtime',
+      })
     }
 
     if (ts.isExportDeclaration(node)) {
       if (node.moduleSpecifier && ts.isStringLiteral(node.moduleSpecifier)) {
-        imports.push(node.moduleSpecifier.text)
+        imports.push({
+          specifier: node.moduleSpecifier.text,
+          kind: 're-export',
+        })
       }
       if (node.exportClause && ts.isNamedExports(node.exportClause)) {
         for (const element of node.exportClause.elements) {
@@ -243,11 +254,11 @@ export function analyzeProjectDependencies(files: SourceFileRecord[], options: A
     const resolvedImports: string[] = []
     const unresolvedImports: string[] = []
 
-    for (const specifier of imports) {
-      const resolved = resolveImport(file.path, specifier, projectFileSet, options)
+    for (const importRef of imports) {
+      const resolved = resolveImport(file.path, importRef.specifier, projectFileSet, options)
       if (!resolved) {
-        unresolvedImports.push(specifier)
-        if (specifier.startsWith('.') || mayBeInternalAliasSpecifier(specifier, options.tsconfigAliases)) {
+        unresolvedImports.push(importRef.specifier)
+        if (importRef.specifier.startsWith('.') || mayBeInternalAliasSpecifier(importRef.specifier, options.tsconfigAliases)) {
           unresolvedInternalCount += 1
         } else {
           unresolvedExternalCount += 1
@@ -261,14 +272,15 @@ export function analyzeProjectDependencies(files: SourceFileRecord[], options: A
       edges.push({
         fromPath: file.path,
         toPath: resolved.path,
-        specifier,
+        specifier: importRef.specifier,
+        kind: importRef.kind,
       })
     }
 
     unresolvedImportCount += unresolvedImports.length
     analyses.push({
       path: file.path,
-      imports,
+      imports: imports.map((item) => item.specifier),
       exports,
       resolvedImports,
       unresolvedImports,

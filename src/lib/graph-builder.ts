@@ -1,5 +1,5 @@
 import { Position, type Edge, type Node, type XYPosition } from '@xyflow/react'
-import type { DependencyGraph, ScannedProject, TreeNode } from './models'
+import type { DependencyEdge, DependencyGraph, ScannedProject, TreeNode } from './models'
 
 const BLOCK_HEADER_HEIGHT = 38
 const FILE_NODE_WIDTH = 240
@@ -28,6 +28,7 @@ type GraphOptions = {
   highlightCycles?: boolean
   routingStyle?: RoutingStyle
   folderPacking?: FolderPackingMode
+  edgeKindFilter?: 'all' | DependencyEdge['kind']
 }
 
 type ConnectionItem = {
@@ -622,7 +623,10 @@ function createFileEdges(
       style: cycleEdgeKeys.has(`${edge.fromPath}->${edge.toPath}`) && highlightCycles
         ? { stroke: '#ff9898', strokeWidth: 2.4 }
         : { stroke: '#7ea3bd', strokeWidth: 1.4 },
-      data: routingStyle === 'bus' ? { busLane: lane, busCount: countByBus.get(busKey) ?? 1 } : undefined,
+      data: {
+        dependencyKind: edge.kind,
+        ...(routingStyle === 'bus' ? { busLane: lane, busCount: countByBus.get(busKey) ?? 1 } : {}),
+      },
     }
   })
 }
@@ -764,7 +768,15 @@ export function buildDependencyFlowGraph(
   const highlightCycles = options.highlightCycles ?? false
   const routingStyle = options.routingStyle ?? 'classic'
   const folderPacking = options.folderPacking ?? 'balanced'
-  const fileEdgesRaw = dependencyGraph.edges.map((edge) => ({
+  const edgeKindFilter = options.edgeKindFilter ?? 'all'
+  const filteredDependencyGraph =
+    edgeKindFilter === 'all'
+      ? dependencyGraph
+      : {
+          ...dependencyGraph,
+          edges: dependencyGraph.edges.filter((edge) => edge.kind === edgeKindFilter),
+        }
+  const fileEdgesRaw = filteredDependencyGraph.edges.map((edge) => ({
     source: `file:${edge.fromPath}`,
     target: `file:${edge.toPath}`,
   }))
@@ -803,7 +815,7 @@ export function buildDependencyFlowGraph(
     return {
       nodes: hierarchical.nodes,
       edges: createFileEdges(
-        dependencyGraph,
+        filteredDependencyGraph,
         hierarchical.fileNodeToBlock,
         fileCycles.cycleEdgeKeys,
         highlightCycles,
@@ -837,7 +849,7 @@ export function buildDependencyFlowGraph(
     fileCycles.cycleNodeIds,
     cycleBlockNodeIds,
   )
-  const interBlockConnections = collectInterBlockConnections(dependencyGraph, topLevel.fileNodeToBlock)
+  const interBlockConnections = collectInterBlockConnections(filteredDependencyGraph, topLevel.fileNodeToBlock)
   const blockCycles = detectCycleNodeIds(
     blocks.map((block) => block.id),
     interBlockConnections.map((edge) => ({ source: edge.source, target: edge.target })),
