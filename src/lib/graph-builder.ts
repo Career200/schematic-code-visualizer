@@ -18,12 +18,23 @@ export type BuiltGraph = {
   edges: Edge[]
   blockCount: number
   blockLayoutEdges: Array<{ source: string; target: string }>
+  cycleEdgeCount: number
 }
 
 type BlockInfo = {
   id: string
   label: string
   files: string[]
+}
+
+type GraphOptions = {
+  highlightCycles?: boolean
+}
+
+type ConnectionItem = {
+  source: string
+  target: string
+  count: number
 }
 
 function getRelativePath(path: string, rootName: string) {
@@ -57,7 +68,12 @@ function createBlocks(project: ScannedProject) {
   return [...blockMap.values()].sort((left, right) => left.label.localeCompare(right.label))
 }
 
-function createNodes(blocks: BlockInfo[], project: ScannedProject) {
+function createNodes(
+  blocks: BlockInfo[],
+  project: ScannedProject,
+  cycleFileNodeIds: Set<string>,
+  cycleBlockNodeIds: Set<string>,
+) {
   const nodes: Node[] = []
   const fileNodeToBlock = new Map<string, string>()
 
@@ -86,7 +102,7 @@ function createNodes(blocks: BlockInfo[], project: ScannedProject) {
         width: blockWidth,
         height: blockHeight,
         borderRadius: 12,
-        border: '1px solid #5f90b7',
+        border: cycleBlockNodeIds.has(block.id) ? '2px solid #ff8f8f' : '1px solid #5f90b7',
         background: 'rgba(8, 32, 54, 0.78)',
       },
     }
@@ -114,7 +130,7 @@ function createNodes(blocks: BlockInfo[], project: ScannedProject) {
           width: FILE_NODE_WIDTH,
           height: FILE_NODE_HEIGHT,
           borderRadius: 8,
-          border: '1px solid #78aacb',
+          border: cycleFileNodeIds.has(`file:${filePath}`) ? '2px solid #ff8f8f' : '1px solid #78aacb',
           background: 'rgba(13, 57, 88, 0.85)',
           color: '#e8f5ff',
           fontSize: 12,
@@ -133,13 +149,19 @@ function createNodes(blocks: BlockInfo[], project: ScannedProject) {
   return { nodes, fileNodeToBlock }
 }
 
-function createFileEdges(dependencyGraph: DependencyGraph): Edge[] {
+function createFileEdges(
+  dependencyGraph: DependencyGraph,
+  cycleEdgeKeys: Set<string>,
+  highlightCycles: boolean,
+): Edge[] {
   return dependencyGraph.edges.map((edge) => ({
     id: `edge:file:${edge.fromPath}->${edge.toPath}`,
     source: `file:${edge.fromPath}`,
     target: `file:${edge.toPath}`,
     animated: false,
-    style: { stroke: '#a4c8e2', strokeWidth: 1.2 },
+    style: cycleEdgeKeys.has(`${edge.fromPath}->${edge.toPath}`) && highlightCycles
+      ? { stroke: '#ff9898', strokeWidth: 2.4 }
+      : { stroke: '#a4c8e2', strokeWidth: 1.2 },
   }))
 }
 
@@ -147,7 +169,7 @@ function collectInterBlockConnections(
   dependencyGraph: DependencyGraph,
   fileNodeToBlock: Map<string, string>,
 ) {
-  const edgeCountByBlockPair = new Map<string, { source: string; target: string; count: number }>()
+  const edgeCountByBlockPair = new Map<string, ConnectionItem>()
 
   for (const edge of dependencyGraph.edges) {
     const sourceNodeId = `file:${edge.fromPath}`
@@ -171,27 +193,142 @@ function collectInterBlockConnections(
   return [...edgeCountByBlockPair.values()]
 }
 
-function createInterBlockEdges(items: Array<{ source: string; target: string; count: number }>): Edge[] {
+function createInterBlockEdges(items: ConnectionItem[], cycleEdgeKeys: Set<string>, highlightCycles: boolean): Edge[] {
   return items.map((item) => ({
     id: `edge:block:${item.source}->${item.target}`,
     source: item.source,
     target: item.target,
     label: String(item.count),
     markerEnd: { type: 'arrowclosed', color: '#f5c16e' },
-    style: { stroke: '#f5c16e', strokeWidth: Math.min(2 + item.count * 0.15, 6) },
+    style: cycleEdgeKeys.has(`${item.source}->${item.target}`) && highlightCycles
+      ? { stroke: '#ff9898', strokeWidth: Math.min(3 + item.count * 0.2, 7) }
+      : { stroke: '#f5c16e', strokeWidth: Math.min(2 + item.count * 0.15, 6) },
     labelStyle: { fill: '#ffe1a8', fontSize: 12, fontWeight: 600 },
   }))
+}
+
+function detectCycleNodeIds(nodeIds: string[], edges: Array<{ source: string; target: string }>) {
+  const adjacency = new Map<string, string[]>()
+  const edgeSet = new Set<string>()
+
+  for (const nodeId of nodeIds) {
+    adjacency.set(nodeId, [])
+  }
+
+  for (const edge of edges) {
+    adjacency.get(edge.source)?.push(edge.target)
+    edgeSet.add(`${edge.source}->${edge.target}`)
+  }
+
+  let currentIndex = 0
+  const indexByNode = new Map<string, number>()
+  const lowByNode = new Map<string, number>()
+  const stack: string[] = []
+  const inStack = new Set<string>()
+  const cycleNodeIds = new Set<string>()
+  const cycleEdgeKeys = new Set<string>()
+
+  function strongConnect(nodeId: string) {
+    indexByNode.set(nodeId, currentIndex)
+    lowByNode.set(nodeId, currentIndex)
+    currentIndex += 1
+    stack.push(nodeId)
+    inStack.add(nodeId)
+
+    for (const next of adjacency.get(nodeId) ?? []) {
+      if (!indexByNode.has(next)) {
+        strongConnect(next)
+        lowByNode.set(nodeId, Math.min(lowByNode.get(nodeId) ?? 0, lowByNode.get(next) ?? 0))
+      } else if (inStack.has(next)) {
+        lowByNode.set(nodeId, Math.min(lowByNode.get(nodeId) ?? 0, indexByNode.get(next) ?? 0))
+      }
+    }
+
+    if ((lowByNode.get(nodeId) ?? -1) === (indexByNode.get(nodeId) ?? -2)) {
+      const component: string[] = []
+      let popped = ''
+      do {
+        popped = stack.pop() ?? ''
+        if (popped) {
+          inStack.delete(popped)
+          component.push(popped)
+        }
+      } while (popped && popped !== nodeId)
+
+      if (component.length > 1) {
+        for (const id of component) {
+          cycleNodeIds.add(id)
+        }
+        for (const source of component) {
+          for (const target of component) {
+            const key = `${source}->${target}`
+            if (edgeSet.has(key)) {
+              cycleEdgeKeys.add(key)
+            }
+          }
+        }
+      } else if (component.length === 1) {
+        const selfLoopKey = `${component[0]}->${component[0]}`
+        if (edgeSet.has(selfLoopKey)) {
+          cycleNodeIds.add(component[0])
+          cycleEdgeKeys.add(selfLoopKey)
+        }
+      }
+    }
+  }
+
+  for (const nodeId of nodeIds) {
+    if (!indexByNode.has(nodeId)) {
+      strongConnect(nodeId)
+    }
+  }
+
+  return { cycleNodeIds, cycleEdgeKeys }
 }
 
 export function buildDependencyFlowGraph(
   project: ScannedProject,
   dependencyGraph: DependencyGraph,
   mode: GraphBuildMode,
+  options: GraphOptions = {},
 ): BuiltGraph {
+  const highlightCycles = options.highlightCycles ?? false
   const blocks = createBlocks(project)
-  const { nodes, fileNodeToBlock } = createNodes(blocks, project)
+  const fileEdgesRaw = dependencyGraph.edges.map((edge) => ({
+    source: `file:${edge.fromPath}`,
+    target: `file:${edge.toPath}`,
+  }))
+  const allFileNodeIds = project.files.map((file) => `file:${file.path}`)
+  const fileCycles = detectCycleNodeIds(allFileNodeIds, fileEdgesRaw)
+
+  const cycleBlockNodeIds = new Set<string>()
+  const blockIdByFileNode = new Map<string, string>()
+  for (const block of blocks) {
+    for (const filePath of block.files) {
+      blockIdByFileNode.set(`file:${filePath}`, block.id)
+    }
+  }
+  for (const fileNodeId of fileCycles.cycleNodeIds) {
+    const blockId = blockIdByFileNode.get(fileNodeId)
+    if (blockId) {
+      cycleBlockNodeIds.add(blockId)
+    }
+  }
+
+  const { nodes, fileNodeToBlock } = createNodes(blocks, project, fileCycles.cycleNodeIds, cycleBlockNodeIds)
   const interBlockConnections = collectInterBlockConnections(dependencyGraph, fileNodeToBlock)
-  const edges = mode === 'inter-block' ? createInterBlockEdges(interBlockConnections) : createFileEdges(dependencyGraph)
+  const blockCycles = detectCycleNodeIds(
+    blocks.map((block) => block.id),
+    interBlockConnections.map((edge) => ({
+      source: edge.source,
+      target: edge.target,
+    })),
+  )
+  const edges =
+    mode === 'inter-block'
+      ? createInterBlockEdges(interBlockConnections, blockCycles.cycleEdgeKeys, highlightCycles)
+      : createFileEdges(dependencyGraph, fileCycles.cycleEdgeKeys, highlightCycles)
+  const cycleEdgeCount = mode === 'inter-block' ? blockCycles.cycleEdgeKeys.size : fileCycles.cycleEdgeKeys.size
 
   return {
     nodes,
@@ -201,5 +338,6 @@ export function buildDependencyFlowGraph(
       source: connection.source,
       target: connection.target,
     })),
+    cycleEdgeCount,
   }
 }

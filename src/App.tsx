@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Background, Controls, MiniMap, ReactFlow } from '@xyflow/react'
+import { Background, Controls, MiniMap, ReactFlow, type NodeMouseHandler } from '@xyflow/react'
 import { analyzeProjectDependencies } from './lib/analyzer'
 import { applyElkToBlockNodes } from './lib/elk-layout'
 import { buildDependencyFlowGraph, type GraphBuildMode } from './lib/graph-builder'
@@ -13,6 +13,9 @@ function App() {
   const [scanResult, setScanResult] = useState<ScannedProject | null>(null)
   const [dependencyGraph, setDependencyGraph] = useState<DependencyGraph | null>(null)
   const [graphMode, setGraphMode] = useState<GraphBuildMode>('file-level')
+  const [highlightCycles, setHighlightCycles] = useState(false)
+  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null)
+  const [directionFilter, setDirectionFilter] = useState<'all' | 'incoming' | 'outgoing'>('all')
   const [layoutedNodes, setLayoutedNodes] = useState<ReturnType<typeof buildDependencyFlowGraph>['nodes']>([])
   const [isLayouting, setIsLayouting] = useState(false)
   const [isScanning, setIsScanning] = useState(false)
@@ -39,8 +42,61 @@ function App() {
     if (!scanResult || !dependencyGraph) {
       return null
     }
-    return buildDependencyFlowGraph(scanResult, dependencyGraph, graphMode)
-  }, [scanResult, dependencyGraph, graphMode])
+    return buildDependencyFlowGraph(scanResult, dependencyGraph, graphMode, { highlightCycles })
+  }, [scanResult, dependencyGraph, graphMode, highlightCycles])
+
+  const visibleEdges = useMemo(() => {
+    if (!flowGraph) {
+      return []
+    }
+    if (!selectedNodeId) {
+      return flowGraph.edges
+    }
+    if (directionFilter === 'incoming') {
+      return flowGraph.edges.filter((edge) => edge.target === selectedNodeId)
+    }
+    if (directionFilter === 'outgoing') {
+      return flowGraph.edges.filter((edge) => edge.source === selectedNodeId)
+    }
+    return flowGraph.edges.filter((edge) => edge.source === selectedNodeId || edge.target === selectedNodeId)
+  }, [flowGraph, selectedNodeId, directionFilter])
+
+  const connectedNodeIds = useMemo(() => {
+    const ids = new Set<string>()
+    if (!selectedNodeId) {
+      return ids
+    }
+    ids.add(selectedNodeId)
+    for (const edge of visibleEdges) {
+      ids.add(edge.source)
+      ids.add(edge.target)
+    }
+    return ids
+  }, [selectedNodeId, visibleEdges])
+
+  const visibleNodes = useMemo(() => {
+    if (!flowGraph || layoutedNodes.length === 0) {
+      return []
+    }
+    if (!selectedNodeId) {
+      return layoutedNodes
+    }
+    return layoutedNodes.map((node) => {
+      const isSelected = node.id === selectedNodeId
+      const isConnected = connectedNodeIds.has(node.id)
+      const nextStyle = {
+        ...(node.style ?? {}),
+        opacity: isConnected ? 1 : 0.32,
+      }
+      if (isSelected) {
+        nextStyle.border = '2px solid #ffe79f'
+      }
+      return {
+        ...node,
+        style: nextStyle,
+      }
+    })
+  }, [flowGraph, layoutedNodes, selectedNodeId, connectedNodeIds])
 
   useEffect(() => {
     let isCancelled = false
@@ -76,6 +132,11 @@ function App() {
     }
   }, [flowGraph])
 
+  useEffect(() => {
+    setSelectedNodeId(null)
+    setDirectionFilter('all')
+  }, [graphMode, scanResult?.rootName])
+
   async function handlePickDirectory() {
     if (!isPickerAvailable) {
       setErrorMessage('Your browser does not support File System Access API (use Chromium-based browser).')
@@ -101,6 +162,14 @@ function App() {
     } finally {
       setIsScanning(false)
     }
+  }
+
+  const onNodeClick: NodeMouseHandler = (_event, node) => {
+    if (graphMode === 'inter-block' && node.parentId) {
+      setSelectedNodeId(node.parentId)
+      return
+    }
+    setSelectedNodeId(node.id)
   }
 
   return (
@@ -189,14 +258,48 @@ function App() {
             </button>
           </div>
         </div>
+        <div className="flow-controls">
+          <label className="toggle-row">
+            <input
+              type="checkbox"
+              checked={highlightCycles}
+              onChange={(event) => setHighlightCycles(event.target.checked)}
+            />
+            Highlight cycles
+          </label>
+          <label className="toggle-row">
+            Direction
+            <select
+              value={directionFilter}
+              onChange={(event) => setDirectionFilter(event.target.value as 'all' | 'incoming' | 'outgoing')}
+              disabled={!selectedNodeId}
+            >
+              <option value="all">all</option>
+              <option value="incoming">incoming</option>
+              <option value="outgoing">outgoing</option>
+            </select>
+          </label>
+          <button type="button" onClick={() => setSelectedNodeId(null)} disabled={!selectedNodeId}>
+            Clear selection
+          </button>
+        </div>
         {flowGraph ? (
           <>
             <p className="canvas-meta">
-              Blocks: {flowGraph.blockCount}, Nodes: {flowGraph.nodes.length}, Edges: {flowGraph.edges.length}
+              Blocks: {flowGraph.blockCount}, Nodes: {flowGraph.nodes.length}, Visible edges: {visibleEdges.length}
+              {' | '}Cycles: {flowGraph.cycleEdgeCount}
               {isLayouting ? ' | Layout: running...' : ' | Layout: ELK ready'}
+              {selectedNodeId ? ` | Selected: ${selectedNodeId}` : ''}
             </p>
             <div className="canvas-shell">
-              <ReactFlow nodes={layoutedNodes} edges={flowGraph.edges} fitView minZoom={0.1} maxZoom={1.5}>
+              <ReactFlow
+                nodes={visibleNodes}
+                edges={visibleEdges}
+                onNodeClick={onNodeClick}
+                fitView
+                minZoom={0.1}
+                maxZoom={1.5}
+              >
                 <MiniMap />
                 <Controls />
                 <Background gap={24} size={1} color="#3a6689" />

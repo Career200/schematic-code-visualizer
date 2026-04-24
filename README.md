@@ -14,6 +14,8 @@ Web app for the first iteration of your idea: scan a local TypeScript project an
 - Interactive dependency canvas with directory blocks.
 - Two modes: `File-Level` and aggregated `Inter-Block` links.
 - ELK-based auto layout for block positioning.
+- Cycle detection and highlight mode.
+- Direction filters (`all`, `incoming`, `outgoing`) for selected node.
 
 ## Tech Stack
 
@@ -41,6 +43,5 @@ For folder selection, use a Chromium-based browser (Chrome/Edge) because this MV
 
 ## Next Planned Steps
 
-- Add cycle highlighting and import direction filters.
 - Add `tsconfig` alias (`baseUrl`, `paths`) resolution.
 - Reduce bundle size (move heavy analysis code to Web Worker / split chunks).

@@ -116,6 +116,30 @@ button:disabled {
   gap: 12px;
 }
 
+.flow-controls {
+  margin: 10px 0 12px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.toggle-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: #c3dced;
+  font-size: 0.9rem;
+}
+
+.flow-controls select {
+  border: 1px solid #5a8ab1;
+  border-radius: 8px;
+  background: #0b2742;
+  color: #dff0fc;
+  padding: 5px 8px;
+}
+
 .mode-switch {
   display: flex;
   gap: 8px;
