@@ -3,7 +3,7 @@ import { Background, Controls, MiniMap, ReactFlow, type NodeMouseHandler } from 
 import { analyzeProjectDependenciesInWorker } from './lib/analyzer-worker-client'
 import { applyElkToBlockNodes } from './lib/elk-layout'
 import { buildDependencyFlowGraph, type GraphBuildMode } from './lib/graph-builder'
-import type { DependencyGraph, ScannedProject } from './lib/models'
+import type { DependencyGraph, FileAnalysis, ScannedProject } from './lib/models'
 import { scanProjectFolder } from './lib/scanner'
 import { readTsConfigAliasConfig } from './lib/tsconfig-reader'
 import { buildTreeLines } from './lib/tree-view'
@@ -17,6 +17,9 @@ function App() {
   const [highlightCycles, setHighlightCycles] = useState(false)
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null)
   const [directionFilter, setDirectionFilter] = useState<'all' | 'incoming' | 'outgoing'>('all')
+  const [searchQuery, setSearchQuery] = useState('')
+  const [collapsedBlockIds, setCollapsedBlockIds] = useState<Set<string>>(new Set())
+  const [hoveredFilePath, setHoveredFilePath] = useState<string | null>(null)
   const [layoutedNodes, setLayoutedNodes] = useState<ReturnType<typeof buildDependencyFlowGraph>['nodes']>([])
   const [isLayouting, setIsLayouting] = useState(false)
   const [isScanning, setIsScanning] = useState(false)
@@ -40,6 +43,14 @@ function App() {
   }, [dependencyGraph])
 
   const previewEdges = useMemo(() => dependencyGraph?.edges.slice(0, 20) ?? [], [dependencyGraph])
+  const fileAnalysisByPath = useMemo(() => {
+    const map = new Map<string, FileAnalysis>()
+    for (const file of dependencyGraph?.files ?? []) {
+      map.set(file.path, file)
+    }
+    return map
+  }, [dependencyGraph])
+
   const flowGraph = useMemo(() => {
     if (!scanResult || !dependencyGraph) {
       return null
@@ -47,21 +58,77 @@ function App() {
     return buildDependencyFlowGraph(scanResult, dependencyGraph, graphMode, { highlightCycles })
   }, [scanResult, dependencyGraph, graphMode, highlightCycles])
 
+  const fileNodeToBlockId = useMemo(() => {
+    const map = new Map<string, string>()
+    for (const node of flowGraph?.nodes ?? []) {
+      if (node.parentId && node.id.startsWith('file:')) {
+        map.set(node.id, node.parentId)
+      }
+    }
+    return map
+  }, [flowGraph])
+
+  const normalizedSearchQuery = searchQuery.trim().toLowerCase()
+  const matchingFileNodeIds = useMemo(() => {
+    if (!flowGraph || !normalizedSearchQuery) {
+      return new Set<string>()
+    }
+    const ids = new Set<string>()
+    for (const node of flowGraph.nodes) {
+      if (!node.id.startsWith('file:')) {
+        continue
+      }
+      const filePath = node.id.slice(5)
+      const label = String(node.data?.label ?? '')
+      if (label.toLowerCase().includes(normalizedSearchQuery) || filePath.toLowerCase().includes(normalizedSearchQuery)) {
+        ids.add(node.id)
+      }
+    }
+    return ids
+  }, [flowGraph, normalizedSearchQuery])
+
+  const blockIdsWithMatches = useMemo(() => {
+    const ids = new Set<string>()
+    for (const fileNodeId of matchingFileNodeIds) {
+      const blockId = fileNodeToBlockId.get(fileNodeId)
+      if (blockId) {
+        ids.add(blockId)
+      }
+    }
+    return ids
+  }, [matchingFileNodeIds, fileNodeToBlockId])
+
+  const hiddenNodeIds = useMemo(() => {
+    const ids = new Set<string>()
+    if (!flowGraph || graphMode !== 'file-level' || collapsedBlockIds.size === 0) {
+      return ids
+    }
+    for (const node of flowGraph.nodes) {
+      if (node.parentId && collapsedBlockIds.has(node.parentId)) {
+        ids.add(node.id)
+      }
+    }
+    return ids
+  }, [flowGraph, graphMode, collapsedBlockIds])
+
   const visibleEdges = useMemo(() => {
     if (!flowGraph) {
       return []
     }
+    const filteredByCollapse = flowGraph.edges.filter(
+      (edge) => !hiddenNodeIds.has(edge.source) && !hiddenNodeIds.has(edge.target),
+    )
     if (!selectedNodeId) {
-      return flowGraph.edges
+      return filteredByCollapse
     }
     if (directionFilter === 'incoming') {
-      return flowGraph.edges.filter((edge) => edge.target === selectedNodeId)
+      return filteredByCollapse.filter((edge) => edge.target === selectedNodeId)
     }
     if (directionFilter === 'outgoing') {
-      return flowGraph.edges.filter((edge) => edge.source === selectedNodeId)
+      return filteredByCollapse.filter((edge) => edge.source === selectedNodeId)
     }
-    return flowGraph.edges.filter((edge) => edge.source === selectedNodeId || edge.target === selectedNodeId)
-  }, [flowGraph, selectedNodeId, directionFilter])
+    return filteredByCollapse.filter((edge) => edge.source === selectedNodeId || edge.target === selectedNodeId)
+  }, [flowGraph, hiddenNodeIds, selectedNodeId, directionFilter])
 
   const connectedNodeIds = useMemo(() => {
     const ids = new Set<string>()
@@ -80,25 +147,52 @@ function App() {
     if (!flowGraph || layoutedNodes.length === 0) {
       return []
     }
-    if (!selectedNodeId) {
-      return layoutedNodes
-    }
-    return layoutedNodes.map((node) => {
+    return layoutedNodes
+      .filter((node) => !hiddenNodeIds.has(node.id))
+      .map((node) => {
       const isSelected = node.id === selectedNodeId
       const isConnected = connectedNodeIds.has(node.id)
+      const isFileNode = node.id.startsWith('file:')
+      const isMatch = matchingFileNodeIds.has(node.id)
+      const isBlockWithMatch = blockIdsWithMatches.has(node.id)
       const nextStyle = {
         ...(node.style ?? {}),
-        opacity: isConnected ? 1 : 0.32,
+        opacity: 1,
+      }
+      if (selectedNodeId) {
+        nextStyle.opacity = isConnected ? 1 : 0.32
+      }
+      if (normalizedSearchQuery) {
+        if (isFileNode && !isMatch) {
+          nextStyle.opacity = Math.min(nextStyle.opacity, 0.2)
+        }
+        if (!isFileNode && !isBlockWithMatch) {
+          nextStyle.opacity = Math.min(nextStyle.opacity, 0.3)
+        }
       }
       if (isSelected) {
         nextStyle.border = '2px solid #ffe79f'
+      }
+      if (normalizedSearchQuery && isMatch) {
+        nextStyle.boxShadow = '0 0 0 2px rgba(255, 231, 159, 0.55)'
+      } else {
+        nextStyle.boxShadow = 'none'
       }
       return {
         ...node,
         style: nextStyle,
       }
     })
-  }, [flowGraph, layoutedNodes, selectedNodeId, connectedNodeIds])
+  }, [
+    flowGraph,
+    layoutedNodes,
+    hiddenNodeIds,
+    selectedNodeId,
+    connectedNodeIds,
+    normalizedSearchQuery,
+    matchingFileNodeIds,
+    blockIdsWithMatches,
+  ])
 
   useEffect(() => {
     let isCancelled = false
@@ -137,6 +231,9 @@ function App() {
   useEffect(() => {
     setSelectedNodeId(null)
     setDirectionFilter('all')
+    setCollapsedBlockIds(new Set())
+    setSearchQuery('')
+    setHoveredFilePath(null)
   }, [graphMode, scanResult?.rootName])
 
   async function handlePickDirectory() {
@@ -182,6 +279,18 @@ function App() {
     setSelectedNodeId(node.id)
   }
 
+  const onNodeMouseEnter: NodeMouseHandler = (_event, node) => {
+    if (!node.id.startsWith('file:')) {
+      setHoveredFilePath(null)
+      return
+    }
+    setHoveredFilePath(node.id.slice(5))
+  }
+
+  const onNodeMouseLeave: NodeMouseHandler = () => {
+    setHoveredFilePath(null)
+  }
+
   const isBusy = isScanning || isAnalyzing
 
   function pickButtonLabel() {
@@ -192,6 +301,33 @@ function App() {
       return 'Analyzing dependencies...'
     }
     return 'Select Project Folder'
+  }
+
+  const selectedBlockId = useMemo(() => {
+    if (!selectedNodeId) {
+      return null
+    }
+    if (selectedNodeId.startsWith('block:')) {
+      return selectedNodeId
+    }
+    return fileNodeToBlockId.get(selectedNodeId) ?? null
+  }, [selectedNodeId, fileNodeToBlockId])
+
+  const hoveredFileAnalysis = hoveredFilePath ? fileAnalysisByPath.get(hoveredFilePath) : null
+
+  function toggleSelectedBlockCollapse() {
+    if (!selectedBlockId || graphMode !== 'file-level') {
+      return
+    }
+    setCollapsedBlockIds((previous) => {
+      const next = new Set(previous)
+      if (next.has(selectedBlockId)) {
+        next.delete(selectedBlockId)
+      } else {
+        next.add(selectedBlockId)
+      }
+      return next
+    })
   }
 
   return (
@@ -304,6 +440,29 @@ function App() {
               <option value="outgoing">outgoing</option>
             </select>
           </label>
+          <label className="toggle-row search-row">
+            Search file
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(event) => setSearchQuery(event.target.value)}
+              placeholder="name or path"
+            />
+          </label>
+          <button
+            type="button"
+            onClick={toggleSelectedBlockCollapse}
+            disabled={graphMode !== 'file-level' || !selectedBlockId}
+          >
+            {selectedBlockId && collapsedBlockIds.has(selectedBlockId) ? 'Expand block' : 'Collapse block'}
+          </button>
+          <button
+            type="button"
+            onClick={() => setCollapsedBlockIds(new Set())}
+            disabled={collapsedBlockIds.size === 0 || graphMode !== 'file-level'}
+          >
+            Expand all blocks
+          </button>
           <button type="button" onClick={() => setSelectedNodeId(null)} disabled={!selectedNodeId}>
             Clear selection
           </button>
@@ -313,14 +472,23 @@ function App() {
             <p className="canvas-meta">
               Blocks: {flowGraph.blockCount}, Nodes: {flowGraph.nodes.length}, Visible edges: {visibleEdges.length}
               {' | '}Cycles: {flowGraph.cycleEdgeCount}
+              {' | '}Matches: {matchingFileNodeIds.size}
               {isLayouting ? ' | Layout: running...' : ' | Layout: ELK ready'}
               {selectedNodeId ? ` | Selected: ${selectedNodeId}` : ''}
+            </p>
+            <p className="canvas-meta">
+              Hover: {hoveredFilePath ?? '-'}
+              {hoveredFileAnalysis
+                ? ` | Exports: ${hoveredFileAnalysis.exports.length > 0 ? hoveredFileAnalysis.exports.join(', ') : 'none'}`
+                : ''}
             </p>
             <div className="canvas-shell">
               <ReactFlow
                 nodes={visibleNodes}
                 edges={visibleEdges}
                 onNodeClick={onNodeClick}
+                onNodeMouseEnter={onNodeMouseEnter}
+                onNodeMouseLeave={onNodeMouseLeave}
                 fitView
                 minZoom={0.1}
                 maxZoom={1.5}

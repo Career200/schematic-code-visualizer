@@ -18,6 +18,9 @@ Web app for the first iteration of your idea: scan a local TypeScript project an
 - Direction filters (`all`, `incoming`, `outgoing`) for selected node.
 - `tsconfig.json` alias resolution (`baseUrl` + `paths`) for import links.
 - Dependency analysis runs in a Web Worker to keep UI responsive.
+- File search (by name or path) with match highlighting.
+- Block collapse/expand controls for dense file-level graphs.
+- Hover details for file path and exported symbols.
 
 ## Tech Stack
 
@@ -45,4 +48,5 @@ For folder selection, use a Chromium-based browser (Chrome/Edge) because this MV
 
 ## Next Planned Steps
 
-- Reduce bundle size further (code-split TypeScript/ELK heavy paths).
+- Smoke test on 2-3 real TypeScript repositories.
+- Capture issues and polish UX for MVP stability.

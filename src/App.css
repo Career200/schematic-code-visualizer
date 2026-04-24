@@ -140,6 +140,15 @@ button:disabled {
   padding: 5px 8px;
 }
 
+.search-row input {
+  border: 1px solid #5a8ab1;
+  border-radius: 8px;
+  background: #0b2742;
+  color: #dff0fc;
+  padding: 5px 8px;
+  min-width: 150px;
+}
+
 .mode-switch {
   display: flex;
   gap: 8px;
