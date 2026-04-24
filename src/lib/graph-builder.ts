@@ -12,6 +12,7 @@ const BLOCK_GAP_Y = 40
 const BLOCK_COLUMNS = 3
 
 export type GraphBuildMode = 'file-level' | 'inter-block'
+export type RoutingStyle = 'classic' | 'bus'
 
 export type BuiltGraph = {
   nodes: Node[]
@@ -29,6 +30,7 @@ type BlockInfo = {
 
 type GraphOptions = {
   highlightCycles?: boolean
+  routingStyle?: RoutingStyle
 }
 
 type ConnectionItem = {
@@ -160,19 +162,41 @@ function createNodes(
 
 function createFileEdges(
   dependencyGraph: DependencyGraph,
+  fileNodeToBlock: Map<string, string>,
   cycleEdgeKeys: Set<string>,
   highlightCycles: boolean,
+  routingStyle: RoutingStyle,
 ): Edge[] {
-  return dependencyGraph.edges.map((edge) => ({
-    id: `edge:file:${edge.fromPath}->${edge.toPath}`,
-    source: `file:${edge.fromPath}`,
-    target: `file:${edge.toPath}`,
-    animated: false,
-    markerEnd: { type: 'arrowclosed', color: '#f5b04d' },
-    style: cycleEdgeKeys.has(`${edge.fromPath}->${edge.toPath}`) && highlightCycles
-      ? { stroke: '#ff9898', strokeWidth: 2.4 }
-      : { stroke: '#6fdc9a', strokeWidth: 1.6 },
-  }))
+  const laneCounterByBus = new Map<string, number>()
+  const countByBus = new Map<string, number>()
+
+  for (const edge of dependencyGraph.edges) {
+    const sourceBlock = fileNodeToBlock.get(`file:${edge.fromPath}`) ?? 'unknown'
+    const targetBlock = fileNodeToBlock.get(`file:${edge.toPath}`) ?? 'unknown'
+    const busKey = `${sourceBlock}->${targetBlock}`
+    countByBus.set(busKey, (countByBus.get(busKey) ?? 0) + 1)
+  }
+
+  return dependencyGraph.edges.map((edge) => {
+    const sourceBlock = fileNodeToBlock.get(`file:${edge.fromPath}`) ?? 'unknown'
+    const targetBlock = fileNodeToBlock.get(`file:${edge.toPath}`) ?? 'unknown'
+    const busKey = `${sourceBlock}->${targetBlock}`
+    const lane = laneCounterByBus.get(busKey) ?? 0
+    laneCounterByBus.set(busKey, lane + 1)
+
+    return {
+      id: `edge:file:${edge.fromPath}->${edge.toPath}`,
+      type: routingStyle === 'bus' ? 'bus' : undefined,
+      source: `file:${edge.fromPath}`,
+      target: `file:${edge.toPath}`,
+      animated: false,
+      markerEnd: { type: 'arrowclosed', color: '#f5b04d' },
+      style: cycleEdgeKeys.has(`${edge.fromPath}->${edge.toPath}`) && highlightCycles
+        ? { stroke: '#ff9898', strokeWidth: 2.4 }
+        : { stroke: '#6fdc9a', strokeWidth: 1.6 },
+      data: routingStyle === 'bus' ? { busLane: lane, busCount: countByBus.get(busKey) ?? 1 } : undefined,
+    }
+  })
 }
 
 function collectInterBlockConnections(
@@ -203,9 +227,15 @@ function collectInterBlockConnections(
   return [...edgeCountByBlockPair.values()]
 }
 
-function createInterBlockEdges(items: ConnectionItem[], cycleEdgeKeys: Set<string>, highlightCycles: boolean): Edge[] {
-  return items.map((item) => ({
+function createInterBlockEdges(
+  items: ConnectionItem[],
+  cycleEdgeKeys: Set<string>,
+  highlightCycles: boolean,
+  routingStyle: RoutingStyle,
+): Edge[] {
+  return items.map((item, index) => ({
     id: `edge:block:${item.source}->${item.target}`,
+    type: routingStyle === 'bus' ? 'bus' : undefined,
     source: item.source,
     target: item.target,
     label: String(item.count),
@@ -214,6 +244,7 @@ function createInterBlockEdges(items: ConnectionItem[], cycleEdgeKeys: Set<strin
       ? { stroke: '#ff9898', strokeWidth: Math.min(3 + item.count * 0.2, 7) }
       : { stroke: '#6fdc9a', strokeWidth: Math.min(2 + item.count * 0.15, 6) },
     labelStyle: { fill: '#b9f7cf', fontSize: 12, fontWeight: 600 },
+    data: routingStyle === 'bus' ? { busLane: index % 3, busCount: 3 } : undefined,
   }))
 }
 
@@ -303,6 +334,7 @@ export function buildDependencyFlowGraph(
   options: GraphOptions = {},
 ): BuiltGraph {
   const highlightCycles = options.highlightCycles ?? false
+  const routingStyle = options.routingStyle ?? 'classic'
   const blocks = createBlocks(project)
   const fileEdgesRaw = dependencyGraph.edges.map((edge) => ({
     source: `file:${edge.fromPath}`,
@@ -342,8 +374,8 @@ export function buildDependencyFlowGraph(
   )
   const edges =
     mode === 'inter-block'
-      ? createInterBlockEdges(interBlockConnections, blockCycles.cycleEdgeKeys, highlightCycles)
-      : createFileEdges(dependencyGraph, fileCycles.cycleEdgeKeys, highlightCycles)
+      ? createInterBlockEdges(interBlockConnections, blockCycles.cycleEdgeKeys, highlightCycles, routingStyle)
+      : createFileEdges(dependencyGraph, fileNodeToBlock, fileCycles.cycleEdgeKeys, highlightCycles, routingStyle)
   const cycleEdgeCount = mode === 'inter-block' ? blockCycles.cycleEdgeKeys.size : fileCycles.cycleEdgeKeys.size
 
   return {

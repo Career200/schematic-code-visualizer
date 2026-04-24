@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Background, Controls, MiniMap, ReactFlow, type NodeMouseHandler } from '@xyflow/react'
+import { Background, Controls, MiniMap, ReactFlow, type Edge, type NodeMouseHandler } from '@xyflow/react'
+import { BusEdge } from './components/BusEdge'
 import { ChipFileNode } from './components/ChipFileNode'
 import { analyzeProjectDependenciesInWorker } from './lib/analyzer-worker-client'
 import { applyElkToBlockNodes } from './lib/elk-layout'
-import { buildDependencyFlowGraph, type GraphBuildMode } from './lib/graph-builder'
+import { buildDependencyFlowGraph, type GraphBuildMode, type RoutingStyle } from './lib/graph-builder'
 import type { DependencyGraph, FileAnalysis, ScannedProject } from './lib/models'
 import { scanProjectFolder } from './lib/scanner'
 import { readTsConfigAliasConfig } from './lib/tsconfig-reader'
@@ -18,6 +19,7 @@ function App() {
   const [scanResult, setScanResult] = useState<ScannedProject | null>(null)
   const [dependencyGraph, setDependencyGraph] = useState<DependencyGraph | null>(null)
   const [graphMode, setGraphMode] = useState<GraphBuildMode>('file-level')
+  const [routingStyle, setRoutingStyle] = useState<RoutingStyle>('classic')
   const [highlightCycles, setHighlightCycles] = useState(false)
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null)
   const [directionFilter, setDirectionFilter] = useState<'all' | 'incoming' | 'outgoing'>('all')
@@ -31,6 +33,7 @@ function App() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const treeLines = useMemo(() => buildTreeLines(scanResult?.tree ?? null), [scanResult])
   const nodeTypes = useMemo(() => ({ chipFile: ChipFileNode }), [])
+  const edgeTypes = useMemo(() => ({ bus: BusEdge }), [])
 
   const isPickerAvailable = typeof window !== 'undefined' && 'showDirectoryPicker' in window
 
@@ -60,8 +63,8 @@ function App() {
     if (!scanResult || !dependencyGraph) {
       return null
     }
-    return buildDependencyFlowGraph(scanResult, dependencyGraph, graphMode, { highlightCycles })
-  }, [scanResult, dependencyGraph, graphMode, highlightCycles])
+    return buildDependencyFlowGraph(scanResult, dependencyGraph, graphMode, { highlightCycles, routingStyle })
+  }, [scanResult, dependencyGraph, graphMode, highlightCycles, routingStyle])
 
   const fileNodeToBlockId = useMemo(() => {
     const map = new Map<string, string>()
@@ -134,6 +137,42 @@ function App() {
     }
     return filteredByCollapse.filter((edge) => edge.source === selectedNodeId || edge.target === selectedNodeId)
   }, [flowGraph, hiddenNodeIds, selectedNodeId, directionFilter])
+
+  const displayEdges = useMemo<Edge[]>(() => {
+    if (!selectedNodeId) {
+      return visibleEdges
+    }
+
+    return visibleEdges.map((edge) => {
+      const isIncoming = edge.target === selectedNodeId
+      const isOutgoing = edge.source === selectedNodeId
+      if (!isIncoming && !isOutgoing) {
+        return edge
+      }
+
+      let color = '#6fdc9a'
+      if (isOutgoing && !isIncoming) {
+        color = '#f5b04d'
+      } else if (isIncoming && !isOutgoing) {
+        color = '#6fdc9a'
+      } else {
+        color = '#ffe79f'
+      }
+
+      return {
+        ...edge,
+        style: {
+          ...(edge.style ?? {}),
+          stroke: color,
+          strokeWidth: Math.max(Number(edge.style?.strokeWidth ?? 0), 2),
+        },
+        markerEnd:
+          edge.markerEnd && typeof edge.markerEnd === 'object'
+            ? { ...edge.markerEnd, color }
+            : { type: 'arrowclosed' as const, color },
+      }
+    })
+  }, [visibleEdges, selectedNodeId])
 
   const connectedNodeIds = useMemo(() => {
     const ids = new Set<string>()
@@ -236,6 +275,7 @@ function App() {
   useEffect(() => {
     setSelectedNodeId(null)
     setDirectionFilter('all')
+    setRoutingStyle('classic')
     setCollapsedBlockIds(new Set())
     setSearchQuery('')
     setHoveredFilePath(null)
@@ -509,6 +549,16 @@ function App() {
                 <option value="outgoing">outgoing</option>
               </select>
             </label>
+            <label className="toggle-row">
+              Routing
+              <select
+                value={routingStyle}
+                onChange={(event) => setRoutingStyle(event.target.value as RoutingStyle)}
+              >
+                <option value="classic">classic</option>
+                <option value="bus">bus</option>
+              </select>
+            </label>
             <label className="toggle-row search-row">
               Search file
               <input
@@ -549,7 +599,7 @@ function App() {
           {flowGraph ? (
             <>
               <p className="canvas-meta">
-                Blocks: {flowGraph.blockCount}, Nodes: {flowGraph.nodes.length}, Visible edges: {visibleEdges.length}
+                Blocks: {flowGraph.blockCount}, Nodes: {flowGraph.nodes.length}, Visible edges: {displayEdges.length}
                 {' | '}Cycles: {flowGraph.cycleEdgeCount}
                 {' | '}Matches: {matchingFileNodeIds.size}
                 {isLayouting ? ' | Layout: running...' : ' | Layout: ELK ready'}
@@ -564,8 +614,9 @@ function App() {
               <div className="canvas-shell">
                 <ReactFlow
                   nodes={visibleNodes}
-                  edges={visibleEdges}
+                  edges={displayEdges}
                   nodeTypes={nodeTypes}
+                  edgeTypes={edgeTypes}
                   onNodeClick={onNodeClick}
                   onNodeMouseEnter={onNodeMouseEnter}
                   onNodeMouseLeave={onNodeMouseLeave}
