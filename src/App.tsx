@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Background, Controls, MiniMap, ReactFlow, type Edge, type NodeMouseHandler } from '@xyflow/react'
+import { Background, MiniMap, ReactFlow, type Edge, type NodeMouseHandler } from '@xyflow/react'
 import { BusEdge } from './components/BusEdge'
-import { CanvasPanPanel } from './components/CanvasPanPanel'
+import { CanvasNavWheel } from './components/CanvasNavWheel'
 import { ChipFileNode } from './components/ChipFileNode'
 import { FolderBlockNode } from './components/FolderBlockNode'
 import { analyzeProjectDependenciesInWorker } from './lib/analyzer-worker-client'
@@ -36,6 +36,7 @@ function App() {
   const [searchQuery, setSearchQuery] = useState('')
   const [collapsedBlockIds, setCollapsedBlockIds] = useState<Set<string>>(new Set())
   const [hoveredFilePath, setHoveredFilePath] = useState<string | null>(null)
+  const [isCanvasLocked, setIsCanvasLocked] = useState(false)
   const [layoutedNodes, setLayoutedNodes] = useState<ReturnType<typeof buildDependencyFlowGraph>['nodes']>([])
   const [isLayouting, setIsLayouting] = useState(false)
   const [isScanning, setIsScanning] = useState(false)
@@ -677,6 +678,7 @@ function App() {
     setCollapsedBlockIds(new Set())
     setSearchQuery('')
     setHoveredFilePath(null)
+    setIsCanvasLocked(false)
     setActiveTab('overview')
   }, [graphMode, scanResult?.rootName])
 
@@ -1182,6 +1184,13 @@ function App() {
                   fitView
                   minZoom={0.1}
                   maxZoom={1.5}
+                  panOnDrag={!isCanvasLocked}
+                  panOnScroll={!isCanvasLocked}
+                  zoomOnScroll={!isCanvasLocked}
+                  zoomOnPinch={!isCanvasLocked}
+                  zoomOnDoubleClick={!isCanvasLocked}
+                  nodesDraggable={!isCanvasLocked}
+                  elementsSelectable={!isCanvasLocked}
                 >
                   <MiniMap
                     position="bottom-right"
@@ -1191,8 +1200,10 @@ function App() {
                     bgColor="rgba(4, 16, 29, 0.92)"
                     maskColor="rgba(2, 9, 16, 0.72)"
                   />
-                  <Controls />
-                  <CanvasPanPanel />
+                  <CanvasNavWheel
+                    isLocked={isCanvasLocked}
+                    onToggleLock={() => setIsCanvasLocked((previous) => !previous)}
+                  />
                   <Background gap={24} size={1} color="#3a6689" />
                 </ReactFlow>
               </div>
