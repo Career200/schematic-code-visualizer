@@ -5,6 +5,11 @@ import { ClassicEdge } from './components/ClassicEdge'
 import { CanvasNavWheel } from './components/CanvasNavWheel'
 import { ChipFileNode } from './components/ChipFileNode'
 import { FolderBlockNode } from './components/FolderBlockNode'
+import {
+  ProjectStructureViz,
+  type StructureViewMode,
+  type TreemapMetricMode,
+} from './components/ProjectStructureViz'
 import { analyzeProjectDependenciesInWorker } from './lib/analyzer-worker-client'
 import { applyElkToBlockNodes } from './lib/elk-layout'
 import {
@@ -25,6 +30,8 @@ type BusDisplayMode = 'detailed' | 'trunk-only'
 
 function App() {
   const [activeTab, setActiveTab] = useState<AppTab>('overview')
+  const [overviewStructureMode, setOverviewStructureMode] = useState<StructureViewMode>('treemap')
+  const [overviewTreemapMetric, setOverviewTreemapMetric] = useState<TreemapMetricMode>('files')
   const [scanResult, setScanResult] = useState<ScannedProject | null>(null)
   const [dependencyGraph, setDependencyGraph] = useState<DependencyGraph | null>(null)
   const [graphMode, setGraphMode] = useState<GraphBuildMode>('file-level')
@@ -45,6 +52,14 @@ function App() {
   const [isAnalyzing, setIsAnalyzing] = useState(false)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const treeLines = useMemo(() => buildTreeLines(scanResult?.tree ?? null), [scanResult])
+  const fileLocByPath = useMemo(() => {
+    const map = new Map<string, number>()
+    for (const file of scanResult?.files ?? []) {
+      const loc = file.content.split(/\r?\n/).length
+      map.set(file.path, Math.max(1, loc))
+    }
+    return map
+  }, [scanResult])
   const nodeTypes = useMemo(() => ({ chipFile: ChipFileNode, folderBlock: FolderBlockNode }), [])
   const edgeTypes = useMemo(() => ({ bus: BusEdge, classicLine: ClassicEdge }), [])
 
@@ -979,9 +994,43 @@ function App() {
               <strong>Search Matches:</strong> {matchingFileNodeIds.size}
             </p>
           </div>
-          <div className="tree">
-            <h2>Directory Tree</h2>
-            <pre>{treeLines.length > 0 ? treeLines.join('\n') : 'Select a folder to scan.'}</pre>
+          <div className="overview-visual-stack">
+            <div className="overview-viz-panel">
+              <div className="overview-viz-header">
+                <h2>Structure View</h2>
+                <div className="overview-viz-controls">
+                  <label className="toggle-row">
+                    View
+                    <select
+                      value={overviewStructureMode}
+                      onChange={(event) => setOverviewStructureMode(event.target.value as StructureViewMode)}
+                    >
+                      <option value="treemap">treemap</option>
+                      <option value="dendrogram">dendrogram</option>
+                      <option value="tree">tree</option>
+                    </select>
+                  </label>
+                  <label className="toggle-row">
+                    Size
+                    <select
+                      value={overviewTreemapMetric}
+                      onChange={(event) => setOverviewTreemapMetric(event.target.value as TreemapMetricMode)}
+                      disabled={overviewStructureMode !== 'treemap'}
+                    >
+                      <option value="files">files</option>
+                      <option value="loc">loc</option>
+                    </select>
+                  </label>
+                </div>
+              </div>
+              <ProjectStructureViz
+                tree={scanResult?.tree ?? null}
+                mode={overviewStructureMode}
+                treemapMetric={overviewTreemapMetric}
+                fileValueByPath={fileLocByPath}
+                treeLines={treeLines}
+              />
+            </div>
           </div>
         </section>
       )}

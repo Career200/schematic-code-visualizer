@@ -81,6 +81,94 @@ button:disabled {
   gap: 16px;
 }
 
+.overview-visual-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+.overview-viz-panel {
+  border: 1px solid rgba(110, 152, 190, 0.4);
+  border-radius: 10px;
+  background: rgba(4, 13, 24, 0.85);
+  padding: 10px;
+}
+
+.overview-viz-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.overview-viz-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.overview-viz-header select {
+  border: 1px solid #5a8ab1;
+  border-radius: 8px;
+  background: #0b2742;
+  color: #dff0fc;
+  padding: 5px 8px;
+}
+
+.overview-viz-shell {
+  width: 100%;
+  min-height: 300px;
+}
+
+.overview-viz-svg {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
+.overview-viz-empty {
+  color: #9fbad1;
+  font-size: 0.9rem;
+  padding: 10px 2px;
+}
+
+.overview-rect-dir {
+  fill: rgba(35, 91, 131, 0.4);
+  stroke: rgba(120, 175, 214, 0.65);
+  stroke-width: 1;
+}
+
+.overview-rect-file {
+  fill: rgba(20, 59, 92, 0.72);
+  stroke: rgba(107, 157, 197, 0.42);
+  stroke-width: 1;
+}
+
+.overview-viz-label {
+  fill: #d8ebfb;
+  font-weight: 600;
+  pointer-events: none;
+}
+
+.overview-dendro-link {
+  stroke: rgba(125, 171, 205, 0.45);
+  stroke-width: 1.1;
+}
+
+.overview-dendro-dir {
+  fill: #73d6a1;
+}
+
+.overview-dendro-file {
+  fill: #84aeca;
+}
+
+.overview-dendro-label {
+  font-size: 10px;
+}
+
 .stats p {
   margin: 8px 0;
   color: #b7d4ea;
