@@ -1,122 +1,91 @@
-# UI Improvement Plan (Post-MVP)
+# UI Improvement Plan (Value-First)
 
 ## Goal
-Move from a single-page technical prototype to a clearer multi-view UI with a compact PCB-like visual language, including chip-style file nodes and routed dependency traces.
+Improve readability and usability first, then add visual polish.  
+Routing scope is intentionally simplified: **single-layer traces + bus-style grouping**, no CAD-grade autorouter.
 
-## Product Direction
-- Split the app into focused tabs (not all controls on one page).
-- Keep graph readability high on medium/large repos.
-- Introduce PCB-inspired styling and connection semantics:
-  - imports: green
-  - exports: orange
-- Route edges with PCB-like feel and constrained angles (target: 45-degree step style).
+## Product Decisions (Locked)
+- Work from highest value to lower value.
+- Keep one routing layer.
+- Edge crossings are acceptable.
+- Prioritize readable flow/buses over perfect geometric optimization.
+- Do not build a full Altium-like routing engine.
 
-## Information Architecture (Tabs)
-1. `Overview`
-   - Project summary cards (files, edges, unresolved external/internal, cycles).
-   - Quick actions: rescan, open folder, mode presets.
-   - Health indicators from smoke metrics.
+## Priority Roadmap
 
-2. `Board View`
-   - Main interactive schematic/PCB canvas.
-   - Block-level and file-level modes.
-   - Search/filter controls specific to board usage.
+### P1 (Highest Value): App Structure and Focused Screens
+1. Add top tabs:
+   - `Overview`
+   - `Board`
+   - `Dependencies`
+   - `Diagnostics`
+2. Move controls out of one long page into contextual tabs.
+3. Keep current functionality intact (search, cycles, mode switches).
 
-3. `Dependencies`
-   - Edge-centric inspection (top fan-in/fan-out, unresolved list, cycle list).
-   - Click item to highlight on board.
+**Value:** big UX clarity gain with low technical risk.
 
-4. `Diagnostics`
-   - Resolver diagnostics (`unresolvedExternal`, `unresolvedInternal`, alias hits).
-   - Raw analysis snapshots for debugging.
+### P2: Board Readability Upgrade (Chip Nodes + Semantics)
+1. Custom file nodes styled as chips.
+2. Left side pins for imports, right side pins for exports.
+3. Color convention:
+   - imports: green
+   - exports: orange
+4. Add a small legend on board view.
 
-## Visual System (PCB Style)
-- Node metaphor:
-  - file node = chip body
-  - import pins = left contacts (green accents)
-  - export pins = right contacts (orange accents)
-- Group metaphor:
-  - block = board region with subtle copper/trace texture
-  - collapsed block = compact “module package”
-- Color conventions:
-  - imports (incoming): green palette
-  - exports (outgoing): orange palette
-  - cycles: red warning overlay
-  - selected path: bright highlight
+**Value:** immediate visual comprehension of dependency direction.
 
-## Routing Plan (45-degree PCB-like)
-### Target behavior
-- Avoid free-angle bezier curves for primary board mode.
-- Use segmented polylines with directions constrained to:
-  - horizontal
-  - vertical
-  - diagonal at 45 degrees
-- Keep visually plausible routing with minimal overlaps.
+### P3: Single-Layer Bus Routing (No Full Autorouter)
+1. Replace free-angle/bezier look with segmented polyline edges.
+2. Use constrained steps (horizontal/vertical + optional 45-degree turns).
+3. Group multiple same-direction edges into shared channels (buses):
+   - block-to-block bus trunks
+   - fan-in/fan-out branches near nodes
+4. Keep deterministic routing and stable layout between rerenders.
 
-### Implementation strategy
-1. `Phase A` (fast)
-   - Replace current edge renderer with polyline router:
-     - source pin -> short horizontal segment
-     - Manhattan backbone
-     - optional 45-degree corner smoothing segments
-   - Deterministic path generation per edge.
+**Value:** large readability jump without heavy algorithmic complexity.
 
-2. `Phase B` (quality)
-   - Grid-based router (A* or Lee-like variant) over occupancy map:
-     - obstacle avoidance around chips/blocks
-     - cost penalties for crossings and excessive bends
-     - movement set includes 8 directions (45-degree capable)
+### P4: Board Interaction Polish
+1. Right inspector panel:
+   - selected node path
+   - imports/exports list
+   - unresolved details
+2. Stronger focus mode for selected path.
+3. Better collapsed-block UX (counts, mini-summary).
 
-3. `Phase C` (refinement)
-   - Bundle parallel routes between same block pairs.
-   - Add lane spacing and layer-like offsets.
-   - Optional “autoroute quality” presets: Fast / Balanced / Clean.
+**Value:** improves day-to-day analysis workflow.
 
-## Technical Work Breakdown
-1. `Navigation shell`
-   - Add top tab bar and stateful routing (`Overview`, `Board`, `Dependencies`, `Diagnostics`).
-   - Move existing controls into appropriate tabs.
+### P5 (Lower Value): Performance and Refinements
+1. Route caching by graph hash.
+2. Optional quality presets for bus spacing.
+3. Visual polish (textures, subtle PCB background details).
 
-2. `Board node redesign`
-   - Create custom React Flow node component for chip-style files.
-   - Add left/right pin rails derived from import/export counts.
+**Value:** good enhancements after core UX is solid.
 
-3. `Edge system redesign`
-   - Introduce custom edge type with polyline path API.
-   - Add color coding by direction semantics.
-   - Add 45-degree routing constraints.
+## Routing Scope (Detailed)
 
-4. `Panel ecosystem`
-   - Right-side inspector (selected node/edge details).
-   - Dependency list with click-to-focus.
+### In Scope
+- Single-layer trace rendering.
+- Bus channels between logical blocks.
+- 45-degree-friendly segmenting for visual style.
+- Basic overlap reduction heuristics.
 
-5. `Performance safeguards`
-   - Keep routing in worker-friendly utilities for large graphs where needed.
-   - Cache computed routes by graph hash + layout version.
-
-## UX Rules
-- No overloaded single screen.
-- Each tab has one primary task.
-- Board interactions should remain fluid under typical project sizes.
-- Controls should be contextual to active tab.
+### Out of Scope
+- Multi-layer routing.
+- Full obstacle-avoiding CAD optimization.
+- Crossing-free guarantees.
+- Net-class / electrical-rule style constraints.
 
 ## Acceptance Criteria
-1. App has 4 working tabs with clear separation of responsibilities.
-2. Board nodes visually resemble chips with side contacts for imports/exports.
-3. Imports are green, exports orange, consistently across edges and legends.
-4. Board mode edge routing no longer uses free-angle curves.
-5. Routing supports 45-degree step segments and avoids most node overlaps.
-6. Existing filters/search/cycle highlighting still work.
-7. Build passes and smoke script remains green.
+1. App is split into 4 tabs with clear responsibilities.
+2. File nodes are chip-like with left import pins and right export pins.
+3. Imports are green, exports are orange everywhere on board.
+4. Board uses bus-oriented polyline routing (single layer).
+5. Existing analysis features remain functional.
+6. Build passes and smoke checks remain green.
 
-## Risks
-- True PCB-grade autorouting complexity is high; keep scope progressive.
-- 45-degree routing can increase path length; need readability tuning.
-- Large graphs may require route caching and progressive rendering.
-
-## Execution Order Recommendation
-1. Tabs + IA split.
-2. Chip-style nodes + color system.
-3. Custom polyline edges (Phase A).
-4. Diagnostics/dependencies tab integration.
-5. Advanced router (Phase B/C) if needed after usability check.
+## Implementation Order (Execution)
+1. Tabs and navigation shell.
+2. Chip node design + legend + pin semantics.
+3. Single-layer bus renderer.
+4. Inspector and interaction polish.
+5. Perf/refinement pass.
