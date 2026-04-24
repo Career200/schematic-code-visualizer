@@ -74,6 +74,28 @@ button:disabled {
   color: #b7d4ea;
 }
 
+.flat-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.flat-list li {
+  color: #b7d4ea;
+  font-size: 0.92rem;
+}
+
+.flat-list code {
+  background: rgba(7, 20, 35, 0.8);
+  border: 1px solid rgba(96, 136, 173, 0.55);
+  border-radius: 8px;
+  padding: 2px 7px;
+  color: #dff0fc;
+}
+
 .tree pre {
   margin: 0;
   border-radius: 10px;

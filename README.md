@@ -8,6 +8,9 @@ Web app for the first iteration of your idea: scan a local TypeScript project an
 - Recursive scan of `.ts` and `.tsx` files.
 - Excludes directories: `node_modules`, `.git`, `dist`, `build`.
 - Tree preview with file and directory counters.
+- TypeScript AST analysis for static imports and exports.
+- Internal dependency graph extraction (relative imports only in MVP).
+- Dependency summary (edge count, unresolved imports, top connected files).
 
 ## Tech Stack
 
@@ -35,7 +38,6 @@ For folder selection, use a Chromium-based browser (Chrome/Edge) because this MV
 
 ## Next Planned Steps
 
-- Parse imports/exports from TS AST.
-- Build file-to-file dependency graph.
 - Group files by directory blocks (logical PCB sections).
 - Render graph with block-aware layout.
+- Add edge bundling and block-level interconnect view.
