@@ -81,6 +81,88 @@ button:disabled {
   gap: 16px;
 }
 
+.board-grid {
+  grid-template-columns: minmax(280px, 340px) minmax(0, 1fr);
+  align-items: start;
+}
+
+.board-sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.board-sidebar .flow-header {
+  align-items: flex-start;
+  flex-direction: column;
+}
+
+.board-sidebar .mode-switch {
+  width: 100%;
+}
+
+.board-sidebar .mode-switch button {
+  flex: 1 1 0;
+  padding: 6px 10px;
+  font-size: 0.8rem;
+  border-radius: 8px;
+}
+
+.board-sidebar .flow-controls {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
+}
+
+.board-sidebar .toggle-row {
+  width: 100%;
+  justify-content: space-between;
+  font-size: 0.84rem;
+}
+
+.board-sidebar .flow-controls select,
+.board-sidebar .search-row input,
+.board-sidebar .flow-controls button {
+  width: 100%;
+}
+
+.board-sidebar .flow-controls select,
+.board-sidebar .search-row input {
+  padding: 4px 8px;
+  font-size: 0.83rem;
+  border-radius: 7px;
+}
+
+.board-sidebar .flow-controls button {
+  padding: 7px 10px;
+  font-size: 0.82rem;
+  border-radius: 8px;
+}
+
+.board-action-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.board-icon-btn {
+  width: 100%;
+  height: 32px;
+  padding: 0;
+  border-radius: 8px;
+  font-size: 16px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.board-main {
+  min-width: 0;
+}
+
 .overview-visual-stack {
   display: flex;
   flex-direction: column;
@@ -589,5 +671,9 @@ button:disabled {
 
   .tab-nav {
     gap: 8px;
+  }
+
+  .board-grid {
+    grid-template-columns: 1fr;
   }
 }

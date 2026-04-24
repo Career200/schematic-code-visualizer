@@ -25,14 +25,18 @@ import { buildTreeLines } from './lib/tree-view'
 import './App.css'
 import '@xyflow/react/dist/style.css'
 
-type AppTab = 'overview' | 'board' | 'dependencies' | 'diagnostics'
+type AppTab = 'overview' | 'board' | 'dependencies' | 'diagnostics' | 'about'
 type BusDisplayMode = 'detailed' | 'trunk-only'
+type FolderControlMode = 'preset' | 'manual'
+type ManualFolderDepth = 'any' | number
 
 function App() {
   const [activeTab, setActiveTab] = useState<AppTab>('overview')
   const [overviewStructureMode, setOverviewStructureMode] = useState<StructureViewMode>('treemap')
   const [overviewTreemapMetric, setOverviewTreemapMetric] = useState<TreemapMetricMode>('files')
   const [scanResult, setScanResult] = useState<ScannedProject | null>(null)
+  const [projectReadmeName, setProjectReadmeName] = useState<string | null>(null)
+  const [projectReadmeContent, setProjectReadmeContent] = useState<string | null>(null)
   const [dependencyGraph, setDependencyGraph] = useState<DependencyGraph | null>(null)
   const [graphMode, setGraphMode] = useState<GraphBuildMode>('file-level')
   const [routingStyle, setRoutingStyle] = useState<RoutingStyle>('classic')
@@ -43,6 +47,9 @@ function App() {
   const [directionFilter, setDirectionFilter] = useState<'all' | 'incoming' | 'outgoing'>('all')
   const [searchQuery, setSearchQuery] = useState('')
   const [collapsedBlockIds, setCollapsedBlockIds] = useState<Set<string>>(new Set())
+  const [autoFolderDepth, setAutoFolderDepth] = useState(true)
+  const [manualFolderDepth, setManualFolderDepth] = useState<ManualFolderDepth>(2)
+  const [folderControlMode, setFolderControlMode] = useState<FolderControlMode>('preset')
   const [hoveredFilePath, setHoveredFilePath] = useState<string | null>(null)
   const [isCanvasLocked, setIsCanvasLocked] = useState(false)
   const [savedViewport, setSavedViewport] = useState<{ x: number; y: number; zoom: number } | null>(null)
@@ -732,6 +739,8 @@ function App() {
     setDirectionFilter('all')
     setRoutingStyle('classic')
     setCollapsedBlockIds(new Set())
+    setAutoFolderDepth(true)
+    setFolderControlMode('preset')
     setSearchQuery('')
     setHoveredFilePath(null)
     setIsCanvasLocked(false)
@@ -743,6 +752,26 @@ function App() {
     setSelectedNodeId(null)
     setDirectionFilter('all')
   }, [routingStyle, busDisplayMode, folderPacking])
+
+  async function readProjectReadme(directoryHandle: FileSystemDirectoryHandle) {
+    const candidateNames = ['README.md', 'Readme.md', 'readme.md', 'README.MD']
+    for (const name of candidateNames) {
+      try {
+        const fileHandle = await directoryHandle.getFileHandle(name)
+        const file = await fileHandle.getFile()
+        return {
+          name,
+          content: await file.text(),
+        }
+      } catch {
+        // Continue search
+      }
+    }
+    return {
+      name: null,
+      content: null,
+    }
+  }
 
   async function handlePickDirectory() {
     if (!isPickerAvailable) {
@@ -758,6 +787,9 @@ function App() {
       const directoryHandle = await window.showDirectoryPicker({
         mode: 'read',
       })
+      const readme = await readProjectReadme(directoryHandle)
+      setProjectReadmeName(readme.name)
+      setProjectReadmeContent(readme.content)
       const scannedProject = await scanProjectFolder(directoryHandle)
       const tsconfigAliases = await readTsConfigAliasConfig(directoryHandle)
       setScanResult(scannedProject)
@@ -833,6 +865,8 @@ function App() {
     if (!selectedBlockId || graphMode !== 'file-level') {
       return
     }
+    setAutoFolderDepth(false)
+    setFolderControlMode('manual')
     setCollapsedBlockIds((previous) => {
       const next = new Set(previous)
       if (next.has(selectedBlockId)) {
@@ -855,8 +889,14 @@ function App() {
     return relative.split('/').length
   }
 
-  function applyFolderDepthPreset(maxDepth: number) {
+  function applyFolderDepthPreset(maxDepth: ManualFolderDepth) {
     if (!flowGraph || graphMode !== 'file-level') {
+      return
+    }
+    if (maxDepth === 'any') {
+      setCollapsedBlockIds(new Set())
+      setSelectedNodeId(null)
+      setDirectionFilter('all')
       return
     }
     const nextCollapsed = new Set<string>()
@@ -932,22 +972,60 @@ function App() {
     applyFolderDepthPreset(chosenDepth)
   }
 
+  const collapsibleBlockIds = useMemo(() => {
+    const ids = new Set<string>()
+    for (const node of flowGraph?.nodes ?? []) {
+      if (!node.id.startsWith('block:')) {
+        continue
+      }
+      if (getFolderDepth(node.id) > 0) {
+        ids.add(node.id)
+      }
+    }
+    return ids
+  }, [flowGraph])
+
+  const areAllFoldersCollapsed = useMemo(() => {
+    if (collapsibleBlockIds.size === 0) {
+      return false
+    }
+    for (const blockId of collapsibleBlockIds) {
+      if (!collapsedBlockIds.has(blockId)) {
+        return false
+      }
+    }
+    return true
+  }, [collapsibleBlockIds, collapsedBlockIds])
+
+  function toggleAllFoldersCollapse() {
+    if (graphMode !== 'file-level' || collapsibleBlockIds.size === 0) {
+      return
+    }
+    setAutoFolderDepth(false)
+    setFolderControlMode('manual')
+    if (areAllFoldersCollapsed) {
+      setCollapsedBlockIds(new Set())
+    } else {
+      setCollapsedBlockIds(new Set(collapsibleBlockIds))
+    }
+  }
+
+  useEffect(() => {
+    if (!flowGraph || graphMode !== 'file-level') {
+      return
+    }
+    if (folderControlMode === 'manual') {
+      return
+    }
+    if (autoFolderDepth) {
+      applyAutoFolderDepth()
+      return
+    }
+    applyFolderDepthPreset(manualFolderDepth)
+  }, [flowGraph, graphMode, autoFolderDepth, manualFolderDepth, folderControlMode])
+
   return (
     <main className="app-shell">
-      <section className="panel">
-        <h1>Schematic Code Visualizer</h1>
-        <p className="subtitle">
-          Iteration v1 scans TypeScript files and maps directory structure into logical board blocks.
-        </p>
-        <div className="actions">
-          <button type="button" onClick={handlePickDirectory} disabled={isBusy}>
-            {pickButtonLabel()}
-          </button>
-          <span className="hint">Supported: `.ts`, `.tsx`; excludes `node_modules`, `.git`, `dist`, `build`.</span>
-        </div>
-        {errorMessage && <p className="error">{errorMessage}</p>}
-      </section>
-
       <section className="panel tab-nav">
         <button type="button" className={activeTab === 'overview' ? 'is-active' : ''} onClick={() => setActiveTab('overview')}>
           Overview
@@ -969,11 +1047,26 @@ function App() {
         >
           Diagnostics
         </button>
+        <button
+          type="button"
+          className={activeTab === 'about' ? 'is-active' : ''}
+          onClick={() => setActiveTab('about')}
+        >
+          About
+        </button>
       </section>
 
       {activeTab === 'overview' && (
         <section className="panel grid">
           <div className="stats">
+            <h2>Project Selection</h2>
+            <div className="actions">
+              <button type="button" onClick={handlePickDirectory} disabled={isBusy}>
+                {pickButtonLabel()}
+              </button>
+              <span className="hint">Supported: `.ts`, `.tsx`; excludes `node_modules`, `.git`, `dist`, `build`.</span>
+            </div>
+            {errorMessage && <p className="error">{errorMessage}</p>}
             <h2>Scan Summary</h2>
             <p>
               <strong>Root:</strong> {scanResult?.rootName ?? '-'}
@@ -1031,6 +1124,35 @@ function App() {
                 treeLines={treeLines}
               />
             </div>
+          </div>
+        </section>
+      )}
+
+      {activeTab === 'about' && (
+        <section className="panel grid">
+          <div className="stats">
+            <h2>About This App</h2>
+            <p>
+              Schematic Code Visualizer analyzes a selected TypeScript project and renders structure + dependency
+              relations as a board-like diagram.
+            </p>
+            <p>
+              <strong>Core idea:</strong> files as components, imports/exports as routing, folders as logical blocks.
+            </p>
+            <p>
+              <strong>Current focus:</strong> readability modes (`classic` / `bus`), hierarchy-aware grouping, and
+              interactive exploration.
+            </p>
+            <p>
+              <strong>Selected project:</strong> {scanResult?.rootName ?? '-'}
+            </p>
+            <p>
+              <strong>README:</strong> {projectReadmeName ?? 'not found in project root'}
+            </p>
+          </div>
+          <div className="tree">
+            <h2>Project README</h2>
+            <pre>{projectReadmeContent ?? 'README.md not found or not loaded yet.'}</pre>
           </div>
         </section>
       )}
@@ -1098,225 +1220,247 @@ function App() {
       )}
 
       {activeTab === 'board' && (
-        <section className="panel">
-          <div className="flow-header">
-            <h2>Dependency Canvas</h2>
-            <div className="mode-switch">
-              <button
-                type="button"
-                className={graphMode === 'file-level' ? 'is-active' : ''}
-                onClick={() => setGraphMode('file-level')}
-              >
-                File-Level
-              </button>
-              <button
-                type="button"
-                className={graphMode === 'inter-block' ? 'is-active' : ''}
-                onClick={() => setGraphMode('inter-block')}
-              >
-                Inter-Block
-              </button>
+        <section className="panel grid board-grid">
+          <div className="stats board-sidebar">
+            <div className="flow-header">
+              <h2>Dependency Canvas</h2>
+              <div className="mode-switch">
+                <button
+                  type="button"
+                  className={graphMode === 'file-level' ? 'is-active' : ''}
+                  onClick={() => setGraphMode('file-level')}
+                >
+                  File-Level
+                </button>
+                <button
+                  type="button"
+                  className={graphMode === 'inter-block' ? 'is-active' : ''}
+                  onClick={() => setGraphMode('inter-block')}
+                >
+                  Inter-Block
+                </button>
+              </div>
             </div>
-          </div>
-          <div className="flow-controls">
-            <label className="toggle-row">
-              <input
-                type="checkbox"
-                checked={highlightCycles}
-                onChange={(event) => setHighlightCycles(event.target.checked)}
-              />
-              Highlight cycles
-            </label>
-            <label className="toggle-row">
-              Direction
-              <select
-                value={directionFilter}
-                onChange={(event) => setDirectionFilter(event.target.value as 'all' | 'incoming' | 'outgoing')}
-                disabled={!selectedNodeId}
-              >
-                <option value="all">all</option>
-                <option value="incoming">incoming</option>
-                <option value="outgoing">outgoing</option>
-              </select>
-            </label>
-            <label className="toggle-row">
-              Routing
-              <select
-                value={routingStyle}
-                onChange={(event) => setRoutingStyle(event.target.value as RoutingStyle)}
-              >
-                <option value="classic">classic</option>
-                <option value="bus">bus</option>
-              </select>
-            </label>
-            <label className="toggle-row">
-              Bus view
-              <select
-                value={busDisplayMode}
-                onChange={(event) => setBusDisplayMode(event.target.value as BusDisplayMode)}
-                disabled={routingStyle !== 'bus'}
-              >
-                <option value="detailed">detailed</option>
-                <option value="trunk-only">trunk-only</option>
-              </select>
-            </label>
-            <label className="toggle-row">
-              Folder packing
-              <select
-                value={folderPacking}
-                onChange={(event) => setFolderPacking(event.target.value as FolderPackingMode)}
-                disabled={graphMode !== 'file-level'}
-              >
-                <option value="balanced">balanced</option>
-                <option value="dense">dense</option>
-              </select>
-            </label>
-            <label className="toggle-row search-row">
-              Search file
-              <input
-                type="text"
-                value={searchQuery}
-                onChange={(event) => setSearchQuery(event.target.value)}
-                placeholder="name or path"
-              />
-            </label>
-            <button
-              type="button"
-              onClick={toggleSelectedBlockCollapse}
-              disabled={graphMode !== 'file-level' || !selectedBlockId}
-            >
-              {selectedBlockId && collapsedBlockIds.has(selectedBlockId) ? 'Expand block' : 'Collapse block'}
-            </button>
-            <button
-              type="button"
-              onClick={() => setCollapsedBlockIds(new Set())}
-              disabled={collapsedBlockIds.size === 0 || graphMode !== 'file-level'}
-            >
-              Expand all folders
-            </button>
-          <button
-            type="button"
-            onClick={applyAutoFolderDepth}
-            disabled={graphMode !== 'file-level' || !flowGraph}
-          >
-            Auto depth
-          </button>
-          <button
-            type="button"
-            onClick={() => applyFolderDepthPreset(1)}
-            disabled={graphMode !== 'file-level'}
-          >
-            Depth 1
-          </button>
-          <button
-            type="button"
-            onClick={() => applyFolderDepthPreset(2)}
-            disabled={graphMode !== 'file-level'}
-          >
-            Depth 2
-          </button>
-          <button
-            type="button"
-            onClick={() => applyFolderDepthPreset(3)}
-            disabled={graphMode !== 'file-level'}
-          >
-            Depth 3
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              setSelectedNodeId(null)
-              setDirectionFilter('all')
-            }}
-            disabled={!selectedNodeId}
-          >
-            Clear selection
-          </button>
-          </div>
-          <div className="board-legend">
-            <span className="legend-item">
-              <span className="legend-swatch legend-swatch-neutral" />
-              Neutral edge
-            </span>
-            <span className="legend-item">
-              <span className="legend-swatch legend-swatch-import" />
-              Incoming (import)
-            </span>
-            <span className="legend-item">
-              <span className="legend-swatch legend-swatch-export" />
-              Outgoing (export)
-            </span>
-            <span className="legend-note">
-              Colors are directional when selected; `trunk-only` keeps channels aggregated.
-            </span>
-          </div>
-          {flowGraph ? (
-            <>
-              <p className="canvas-meta">
-                Blocks: {flowGraph.blockCount}, Nodes: {flowGraph.nodes.length}, Visible edges: {displayEdges.length}
-                {' | '}Cycles: {flowGraph.cycleEdgeCount}
-                {' | '}Matches: {matchingFileNodeIds.size}
-                {isLayouting ? ' | Layout: running...' : ' | Layout: ELK ready'}
-              </p>
-              <div className="canvas-shell">
-                <ReactFlow
-                  key={`rf-${graphMode}-${routingStyle}-${busDisplayMode}-${folderPacking}-${
-                    routingStyle === 'classic' ? `${selectedNodeId ?? 'none'}-${directionFilter}` : 'stable'
-                  }`}
-                  nodes={visibleNodes}
-                  edges={displayEdges}
-                  nodeTypes={nodeTypes}
-                  edgeTypes={edgeTypes}
-                  onNodeClick={onNodeClick}
-                  onPaneClick={() => {
+            <div className="flow-controls">
+              <label className="toggle-row">
+                <input
+                  type="checkbox"
+                  checked={highlightCycles}
+                  onChange={(event) => setHighlightCycles(event.target.checked)}
+                />
+                Highlight cycles
+              </label>
+              <label className="toggle-row">
+                Direction
+                <select
+                  value={directionFilter}
+                  onChange={(event) => setDirectionFilter(event.target.value as 'all' | 'incoming' | 'outgoing')}
+                  disabled={!selectedNodeId}
+                >
+                  <option value="all">all</option>
+                  <option value="incoming">incoming</option>
+                  <option value="outgoing">outgoing</option>
+                </select>
+              </label>
+              <label className="toggle-row">
+                Routing
+                <select
+                  value={routingStyle}
+                  onChange={(event) => setRoutingStyle(event.target.value as RoutingStyle)}
+                >
+                  <option value="classic">classic</option>
+                  <option value="bus">bus</option>
+                </select>
+              </label>
+              <label className="toggle-row">
+                Bus view
+                <select
+                  value={busDisplayMode}
+                  onChange={(event) => setBusDisplayMode(event.target.value as BusDisplayMode)}
+                  disabled={routingStyle !== 'bus'}
+                >
+                  <option value="detailed">detailed</option>
+                  <option value="trunk-only">trunk-only</option>
+                </select>
+              </label>
+              <label className="toggle-row">
+                Folder packing
+                <select
+                  value={folderPacking}
+                  onChange={(event) => setFolderPacking(event.target.value as FolderPackingMode)}
+                  disabled={graphMode !== 'file-level'}
+                >
+                  <option value="balanced">balanced</option>
+                  <option value="dense">dense</option>
+                </select>
+              </label>
+              <label className="toggle-row">
+                Auto depth
+                <input
+                  type="checkbox"
+                  checked={autoFolderDepth}
+                  onChange={(event) => {
+                    setAutoFolderDepth(event.target.checked)
+                    setFolderControlMode('preset')
+                  }}
+                  disabled={graphMode !== 'file-level' || !flowGraph}
+                />
+              </label>
+              <label className="toggle-row">
+                Depth
+                <select
+                  value={String(manualFolderDepth)}
+                  onChange={(event) => {
+                    const nextValue = event.target.value === 'any' ? 'any' : Number(event.target.value)
+                    setManualFolderDepth(nextValue)
+                    setAutoFolderDepth(false)
+                    setFolderControlMode('preset')
+                  }}
+                  disabled={graphMode !== 'file-level' || autoFolderDepth}
+                >
+                  <option value="any">any</option>
+                  <option value={1}>1</option>
+                  <option value={2}>2</option>
+                  <option value={3}>3</option>
+                  <option value={4}>4</option>
+                  <option value={5}>5</option>
+                  <option value={6}>6</option>
+                  <option value={7}>7</option>
+                  <option value={8}>8</option>
+                </select>
+              </label>
+              <label className="toggle-row search-row">
+                Search file
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={(event) => setSearchQuery(event.target.value)}
+                  placeholder="name or path"
+                />
+              </label>
+              <div className="board-action-grid">
+                <button
+                  type="button"
+                  className="board-icon-btn"
+                  title={selectedBlockId && collapsedBlockIds.has(selectedBlockId) ? 'Expand selected block' : 'Collapse selected block'}
+                  aria-label={selectedBlockId && collapsedBlockIds.has(selectedBlockId) ? 'Expand selected block' : 'Collapse selected block'}
+                  onClick={toggleSelectedBlockCollapse}
+                  disabled={graphMode !== 'file-level' || !selectedBlockId}
+                >
+                  {selectedBlockId && collapsedBlockIds.has(selectedBlockId) ? '⤢' : '⤡'}
+                </button>
+                <button
+                  type="button"
+                  className="board-icon-btn"
+                  title={areAllFoldersCollapsed ? 'Expand all folders' : 'Collapse all folders'}
+                  aria-label={areAllFoldersCollapsed ? 'Expand all folders' : 'Collapse all folders'}
+                  onClick={toggleAllFoldersCollapse}
+                  disabled={graphMode !== 'file-level' || collapsibleBlockIds.size === 0}
+                >
+                  {areAllFoldersCollapsed ? '⤢' : '⤡'}
+                </button>
+                <button
+                  type="button"
+                  className="board-icon-btn"
+                  title="Clear selection"
+                  aria-label="Clear selection"
+                  onClick={() => {
                     setSelectedNodeId(null)
                     setDirectionFilter('all')
                   }}
-                  onNodeMouseEnter={onNodeMouseEnter}
-                  onNodeMouseLeave={onNodeMouseLeave}
-                  defaultViewport={savedViewport ?? { x: 0, y: 0, zoom: 1 }}
-                  fitView={!savedViewport}
-                  minZoom={0.1}
-                  maxZoom={1.5}
-                  panOnDrag={!isCanvasLocked}
-                  panOnScroll={!isCanvasLocked}
-                  zoomOnScroll={!isCanvasLocked}
-                  zoomOnPinch={!isCanvasLocked}
-                  zoomOnDoubleClick={!isCanvasLocked}
-                  nodesDraggable={!isCanvasLocked}
-                  elementsSelectable={!isCanvasLocked}
-                  onInit={(instance) => {
-                    setSavedViewport(instance.getViewport())
-                  }}
-                  onMoveEnd={(_event, viewport) => {
-                    setSavedViewport(viewport)
-                  }}
+                  disabled={!selectedNodeId}
                 >
-                  <MiniMap
-                    position="bottom-right"
-                    pannable
-                    zoomable
-                    nodeColor="#335f82"
-                    bgColor="rgba(4, 16, 29, 0.92)"
-                    maskColor="rgba(2, 9, 16, 0.72)"
-                  />
-                  <CanvasNavWheel
-                    isLocked={isCanvasLocked}
-                    onToggleLock={() => setIsCanvasLocked((previous) => !previous)}
-                  />
-                  <Background gap={24} size={1} color="#3a6689" />
-                </ReactFlow>
+                  ⨯
+                </button>
               </div>
-              <p className="canvas-selected-strip" title={selectedInfoLine}>
-                Selected: <span className="canvas-selected-value">{selectedInfoLine}</span>
-              </p>
-              <p className="canvas-hover-strip" title={hoverInfoLine}>
-                Hover: <span className="canvas-hover-value">{hoverInfoLine}</span>
-              </p>
-            </>
-          ) : (
-            <p className="canvas-meta">Scan a folder to build and render dependency canvas.</p>
-          )}
+            </div>
+            <div className="board-legend">
+              <span className="legend-item">
+                <span className="legend-swatch legend-swatch-neutral" />
+                Neutral edge
+              </span>
+              <span className="legend-item">
+                <span className="legend-swatch legend-swatch-import" />
+                Incoming (import)
+              </span>
+              <span className="legend-item">
+                <span className="legend-swatch legend-swatch-export" />
+                Outgoing (export)
+              </span>
+              <span className="legend-note">
+                Colors are directional when selected; `trunk-only` keeps channels aggregated.
+              </span>
+            </div>
+          </div>
+          <div className="board-main">
+            {flowGraph ? (
+              <>
+                <p className="canvas-meta">
+                  Blocks: {flowGraph.blockCount}, Nodes: {flowGraph.nodes.length}, Visible edges: {displayEdges.length}
+                  {' | '}Cycles: {flowGraph.cycleEdgeCount}
+                  {' | '}Matches: {matchingFileNodeIds.size}
+                  {isLayouting ? ' | Layout: running...' : ' | Layout: ELK ready'}
+                </p>
+                <div className="canvas-shell">
+                  <ReactFlow
+                    key={`rf-${graphMode}-${routingStyle}-${busDisplayMode}-${folderPacking}-${
+                      routingStyle === 'classic' ? `${selectedNodeId ?? 'none'}-${directionFilter}` : 'stable'
+                    }`}
+                    nodes={visibleNodes}
+                    edges={displayEdges}
+                    nodeTypes={nodeTypes}
+                    edgeTypes={edgeTypes}
+                    onNodeClick={onNodeClick}
+                    onPaneClick={() => {
+                      setSelectedNodeId(null)
+                      setDirectionFilter('all')
+                    }}
+                    onNodeMouseEnter={onNodeMouseEnter}
+                    onNodeMouseLeave={onNodeMouseLeave}
+                    defaultViewport={savedViewport ?? { x: 0, y: 0, zoom: 1 }}
+                    fitView={!savedViewport}
+                    minZoom={0.1}
+                    maxZoom={1.5}
+                    panOnDrag={!isCanvasLocked}
+                    panOnScroll={!isCanvasLocked}
+                    zoomOnScroll={!isCanvasLocked}
+                    zoomOnPinch={!isCanvasLocked}
+                    zoomOnDoubleClick={!isCanvasLocked}
+                    nodesDraggable={!isCanvasLocked}
+                    elementsSelectable={!isCanvasLocked}
+                    onInit={(instance) => {
+                      setSavedViewport(instance.getViewport())
+                    }}
+                    onMoveEnd={(_event, viewport) => {
+                      setSavedViewport(viewport)
+                    }}
+                  >
+                    <MiniMap
+                      position="bottom-right"
+                      pannable
+                      zoomable
+                      nodeColor="#335f82"
+                      bgColor="rgba(4, 16, 29, 0.92)"
+                      maskColor="rgba(2, 9, 16, 0.72)"
+                    />
+                    <CanvasNavWheel
+                      isLocked={isCanvasLocked}
+                      onToggleLock={() => setIsCanvasLocked((previous) => !previous)}
+                    />
+                    <Background gap={24} size={1} color="#3a6689" />
+                  </ReactFlow>
+                </div>
+                <p className="canvas-selected-strip" title={selectedInfoLine}>
+                  Selected: <span className="canvas-selected-value">{selectedInfoLine}</span>
+                </p>
+                <p className="canvas-hover-strip" title={hoverInfoLine}>
+                  Hover: <span className="canvas-hover-value">{hoverInfoLine}</span>
+                </p>
+              </>
+            ) : (
+              <p className="canvas-meta">Scan a folder to build and render dependency canvas.</p>
+            )}
+          </div>
         </section>
       )}
     </main>
