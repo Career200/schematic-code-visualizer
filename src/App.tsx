@@ -2868,57 +2868,71 @@ function App() {
       )}
 
       {activeTab === 'about' && (
-        <section className="panel grid">
+        <section className="panel grid about-grid">
           <div className="stats">
-            <h2>About This App</h2>
-            <p>
-              Schematic Code Visualizer analyzes a selected TypeScript project and renders structure + dependency
-              relations as a board-like diagram.
-            </p>
-            <p>
-              <strong>Core idea:</strong> files as components, imports/exports as routing, folders as logical blocks.
-            </p>
-            <p>
-              <strong>Current focus:</strong> readability modes (`classic` / `bus`), hierarchy-aware grouping, and
-              interactive exploration.
-            </p>
-            <p>
-              <strong>Selected project:</strong> {scanResult?.rootName ?? '-'}
-            </p>
-            <p>
-              <strong>README:</strong> {projectReadmeName ?? 'not found in project root'}
-            </p>
+            <div className="section-card">
+              <h2>About This App</h2>
+              <p>
+                Schematic Code Visualizer analyzes a selected TypeScript project and renders structure + dependency
+                relations as a board-like diagram.
+              </p>
+              <p>
+                <strong>Core idea:</strong> files as components, imports/exports as routing, folders as logical blocks.
+              </p>
+              <p>
+                <strong>Current focus:</strong> readability modes (`classic` / `bus`), hierarchy-aware grouping, and
+                interactive exploration.
+              </p>
+            </div>
+
+            <div className="section-card">
+              <h2>Project Context</h2>
+              <p>
+                <strong>Selected project:</strong> {scanResult?.rootName ?? '-'}
+              </p>
+              <p>
+                <strong>README:</strong> {projectReadmeName ?? 'not found in project root'}
+              </p>
+            </div>
           </div>
-          <div className="tree">
-            <h2>Project README</h2>
-            <pre>{projectReadmeContent ?? 'README.md not found or not loaded yet.'}</pre>
+
+          <div className="right-stack">
+            <div className="section-card tree">
+              <h2>Project README</h2>
+              <pre className="report-pre">{projectReadmeContent ?? 'README.md not found or not loaded yet.'}</pre>
+            </div>
           </div>
         </section>
       )}
 
       {activeTab === 'dependencies' && (
-        <section className="panel grid">
+        <section className="panel grid dependencies-grid">
           <div className="stats">
-            <h2>Top Connected Files</h2>
-            {topConnectedFiles.length > 0 ? (
-              <ul className="flat-list">
-                {topConnectedFiles.map((file) => (
-                  <li key={file.path}>
-                    <code>{file.path}</code> ({file.resolvedImports.length} links, {file.exports.length} exports)
-                  </li>
-                ))}
-              </ul>
-            ) : (
-              <p>No dependency data yet.</p>
-            )}
+            <div className="section-card">
+              <h2>Top Connected Files</h2>
+              {topConnectedFiles.length > 0 ? (
+                <ul className="flat-list">
+                  {topConnectedFiles.map((file) => (
+                    <li key={file.path}>
+                      <code>{file.path}</code> ({file.resolvedImports.length} links, {file.exports.length} exports)
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p>No dependency data yet.</p>
+              )}
+            </div>
           </div>
-          <div className="tree">
-            <h2>Dependency Preview (first 20 edges)</h2>
-            <pre>
-              {previewEdges.length > 0
-                ? previewEdges.map((edge) => `${edge.fromPath} -> ${edge.toPath}`).join('\n')
-                : 'Scan a folder to generate dependency edges.'}
-            </pre>
+
+          <div className="right-stack">
+            <div className="section-card tree">
+              <h2>Dependency Preview (first 20 edges)</h2>
+              <pre className="report-pre">
+                {previewEdges.length > 0
+                  ? previewEdges.map((edge) => `${edge.fromPath} -> ${edge.toPath}`).join('\n')
+                  : 'Scan a folder to generate dependency edges.'}
+              </pre>
+            </div>
           </div>
         </section>
       )}

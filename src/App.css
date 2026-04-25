@@ -87,6 +87,12 @@ button:disabled {
   align-items: start;
 }
 
+.about-grid,
+.dependencies-grid {
+  grid-template-columns: minmax(300px, 380px) minmax(0, 1fr);
+  align-items: start;
+}
+
 .board-grid {
   grid-template-columns: minmax(280px, 340px) minmax(0, 1fr);
   align-items: start;
@@ -308,6 +314,14 @@ button:disabled {
   border-radius: 8px;
   padding: 2px 7px;
   color: #dff0fc;
+}
+
+.dependencies-grid .flat-list code {
+  display: inline-block;
+  max-width: 100%;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .architecture-config-panel {
