@@ -580,6 +580,22 @@ button:disabled {
   background: #57e6ff;
 }
 
+.legend-swatch-branch-added {
+  background: #38d39f;
+}
+
+.legend-swatch-branch-modified {
+  background: #ffd166;
+}
+
+.legend-swatch-branch-deleted {
+  background: #ff7d7d;
+}
+
+.legend-swatch-branch-renamed {
+  background: #8ac7ff;
+}
+
 .canvas-meta {
   color: #b7d4ea;
   margin: 8px 0 12px;

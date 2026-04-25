@@ -78,6 +78,21 @@ Optional arguments:
 - `--since <git-date-expression>`: date range for `git log`
 - `--out <file>`: output JSON filename/path (relative to repo root by default)
 
+## Git Branch Compare Report
+
+Generate a branch compare JSON that can be imported in `Diagnostics -> Git Branch Compare`:
+
+```bash
+npm run git-compare -- --base main --target HEAD --out git-branch-compare-report.json
+```
+
+Optional arguments:
+
+- `--repo <path>`: repository root (defaults to current directory)
+- `--base <ref>`: base branch/ref (for example `main`)
+- `--target <ref>`: target branch/ref (for example `feature/my-branch` or `HEAD`)
+- `--out <file>`: output JSON filename/path (relative to repo root by default)
+
 ## Browser Notes
 
 For folder selection, use a Chromium-based browser (Chrome/Edge) because this MVP relies on the File System Access API.

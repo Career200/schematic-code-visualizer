@@ -31,6 +31,7 @@ type FolderControlMode = 'preset' | 'manual'
 type ManualFolderDepth = 'any' | number
 type EdgeKindFilter = 'all' | DependencyEdge['kind']
 type EdgeColorPriority = 'direction' | 'kind'
+type BranchDiffView = 'off' | 'all' | 'added' | 'modified' | 'deleted' | 'renamed'
 type CycleGroup = {
   id: number
   size: number
@@ -158,6 +159,32 @@ type GitChurnReport = {
     additions: number
     deletions: number
     churn: number
+  }>
+}
+type GitBranchCompareReport = {
+  type: 'git-branch-compare-report-v1'
+  generatedAt: string
+  repoRootName: string
+  baseRef: string
+  targetRef: string
+  mergeBase: string
+  summary: {
+    changedFiles: number
+    added: number
+    modified: number
+    deleted: number
+    renamed: number
+    totalAdditions: number
+    totalDeletions: number
+    totalChurn: number
+  }
+  files: Array<{
+    path: string
+    changeType: 'A' | 'M' | 'D' | 'R' | 'C' | 'T' | 'U'
+    additions: number
+    deletions: number
+    churn: number
+    oldPath?: string
   }>
 }
 type ArchitectureConfig = {
@@ -601,6 +628,65 @@ function isGitChurnReportCandidate(value: unknown): value is GitChurnReport {
   )
 }
 
+function isGitBranchCompareReportCandidate(value: unknown): value is GitBranchCompareReport {
+  if (!value || typeof value !== 'object') {
+    return false
+  }
+  const candidate = value as Partial<GitBranchCompareReport>
+  return (
+    candidate.type === 'git-branch-compare-report-v1' &&
+    typeof candidate.generatedAt === 'string' &&
+    typeof candidate.repoRootName === 'string' &&
+    typeof candidate.baseRef === 'string' &&
+    typeof candidate.targetRef === 'string' &&
+    typeof candidate.mergeBase === 'string' &&
+    !!candidate.summary &&
+    typeof candidate.summary.changedFiles === 'number' &&
+    typeof candidate.summary.totalChurn === 'number' &&
+    Array.isArray(candidate.files)
+  )
+}
+
+function toBranchDiffBucket(changeType: GitBranchCompareReport['files'][number]['changeType']): Exclude<BranchDiffView, 'off' | 'all'> {
+  if (changeType === 'A') {
+    return 'added'
+  }
+  if (changeType === 'D') {
+    return 'deleted'
+  }
+  if (changeType === 'R') {
+    return 'renamed'
+  }
+  return 'modified'
+}
+
+function mergeBranchDiffBuckets(
+  left: Exclude<BranchDiffView, 'off' | 'all'> | undefined,
+  right: Exclude<BranchDiffView, 'off' | 'all'> | undefined,
+): Exclude<BranchDiffView, 'off' | 'all'> | null {
+  const rank = (value: Exclude<BranchDiffView, 'off' | 'all'> | undefined) => {
+    if (value === 'deleted') {
+      return 4
+    }
+    if (value === 'added') {
+      return 3
+    }
+    if (value === 'renamed') {
+      return 2
+    }
+    if (value === 'modified') {
+      return 1
+    }
+    return 0
+  }
+  const leftRank = rank(left)
+  const rightRank = rank(right)
+  if (leftRank === 0 && rightRank === 0) {
+    return null
+  }
+  return leftRank >= rightRank ? (left as Exclude<BranchDiffView, 'off' | 'all'>) : (right as Exclude<BranchDiffView, 'off' | 'all'>)
+}
+
 function App() {
   const [activeTab, setActiveTab] = useState<AppTab>('overview')
   const [overviewStructureMode, setOverviewStructureMode] = useState<StructureViewMode>('treemap')
@@ -621,6 +707,8 @@ function App() {
   const [highlightArchitectureViolations, setHighlightArchitectureViolations] = useState(true)
   const [showBaselineDiff, setShowBaselineDiff] = useState(false)
   const [showOnlyNewDiff, setShowOnlyNewDiff] = useState(false)
+  const [branchDiffView, setBranchDiffView] = useState<BranchDiffView>('off')
+  const [highlightOnlyChangedBranchEdges, setHighlightOnlyChangedBranchEdges] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const [collapsedBlockIds, setCollapsedBlockIds] = useState<Set<string>>(new Set())
   const [autoFolderDepth, setAutoFolderDepth] = useState(true)
@@ -645,6 +733,9 @@ function App() {
   const [gitChurnReport, setGitChurnReport] = useState<GitChurnReport | null>(null)
   const [gitChurnReportName, setGitChurnReportName] = useState<string | null>(null)
   const [gitChurnReportError, setGitChurnReportError] = useState<string | null>(null)
+  const [gitBranchCompareReport, setGitBranchCompareReport] = useState<GitBranchCompareReport | null>(null)
+  const [gitBranchCompareReportName, setGitBranchCompareReportName] = useState<string | null>(null)
+  const [gitBranchCompareReportError, setGitBranchCompareReportError] = useState<string | null>(null)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const treeLines = useMemo(() => buildTreeLines(scanResult?.tree ?? null), [scanResult])
   const fileLocByPath = useMemo(() => {
@@ -1239,6 +1330,64 @@ function App() {
       .sort((left, right) => right.weighted - left.weighted || right.churn - left.churn || left.path.localeCompare(right.path))
       .slice(0, 20)
   }, [dependencyGraph, gitChurnByPath, incomingEdgeCountByPath, outgoingEdgeCountByPath])
+  const branchCompareByPath = useMemo(() => {
+    const map = new Map<string, { changeType: string; additions: number; deletions: number; churn: number; oldPath?: string }>()
+    const rootName = scanResult?.rootName
+    for (const item of gitBranchCompareReport?.files ?? []) {
+      const normalized = item.path.replace(/\\/g, '/').replace(/^\.\//, '')
+      map.set(normalized, item)
+      if (rootName && !normalized.startsWith(`${rootName}/`)) {
+        map.set(`${rootName}/${normalized}`, item)
+      }
+    }
+    return map
+  }, [gitBranchCompareReport, scanResult?.rootName])
+  const branchCompareHotFiles = useMemo(() => {
+    if (!dependencyGraph) {
+      return []
+    }
+    return dependencyGraph.files
+      .map((file) => {
+        const changed = branchCompareByPath.get(file.path)
+        const incoming = incomingEdgeCountByPath.get(file.path) ?? 0
+        const outgoing = outgoingEdgeCountByPath.get(file.path) ?? 0
+        const centrality = incoming + outgoing
+        const churn = changed?.churn ?? 0
+        const weighted = Number((churn * (1 + Math.log2(centrality + 1))).toFixed(2))
+        return {
+          path: file.path,
+          changeType: changed?.changeType ?? 'M',
+          additions: changed?.additions ?? 0,
+          deletions: changed?.deletions ?? 0,
+          churn,
+          centrality,
+          weighted,
+          oldPath: changed?.oldPath,
+        }
+      })
+      .filter((item) => item.churn > 0)
+      .sort((left, right) => right.weighted - left.weighted || right.churn - left.churn || left.path.localeCompare(right.path))
+      .slice(0, 20)
+  }, [dependencyGraph, branchCompareByPath, incomingEdgeCountByPath, outgoingEdgeCountByPath])
+  const branchDiffBucketByFileNodeId = useMemo(() => {
+    const map = new Map<string, Exclude<BranchDiffView, 'off' | 'all'>>()
+    for (const [path, item] of branchCompareByPath.entries()) {
+      map.set(`file:${path}`, toBranchDiffBucket(item.changeType as GitBranchCompareReport['files'][number]['changeType']))
+    }
+    return map
+  }, [branchCompareByPath])
+  const branchDiffVisibleFileNodeIds = useMemo(() => {
+    if (branchDiffView === 'off' || !gitBranchCompareReport) {
+      return new Set<string>()
+    }
+    const ids = new Set<string>()
+    for (const [fileNodeId, bucket] of branchDiffBucketByFileNodeId.entries()) {
+      if (branchDiffView === 'all' || bucket === branchDiffView) {
+        ids.add(fileNodeId)
+      }
+    }
+    return ids
+  }, [branchDiffView, gitBranchCompareReport, branchDiffBucketByFileNodeId])
   const architectureViolationEdgeKeySet = useMemo(() => {
     const keys = new Set<string>()
     for (const item of architectureViolations) {
@@ -1538,6 +1687,33 @@ function App() {
     }
     return map
   }, [flowGraph])
+  const branchDiffVisibleBlockIds = useMemo(() => {
+    if (branchDiffVisibleFileNodeIds.size === 0) {
+      return new Set<string>()
+    }
+    const ids = new Set<string>()
+    for (const fileNodeId of branchDiffVisibleFileNodeIds) {
+      const blockId = fileNodeToBlockId.get(fileNodeId)
+      if (blockId) {
+        ids.add(blockId)
+      }
+    }
+    return ids
+  }, [branchDiffVisibleFileNodeIds, fileNodeToBlockId])
+  const branchDiffBucketsByBlockId = useMemo(() => {
+    const map = new Map<string, Exclude<BranchDiffView, 'off' | 'all'>>()
+    for (const [fileNodeId, bucket] of branchDiffBucketByFileNodeId.entries()) {
+      const blockId = fileNodeToBlockId.get(fileNodeId)
+      if (!blockId) {
+        continue
+      }
+      const merged = mergeBranchDiffBuckets(map.get(blockId), bucket)
+      if (merged) {
+        map.set(blockId, merged)
+      }
+    }
+    return map
+  }, [branchDiffBucketByFileNodeId, fileNodeToBlockId])
 
   const normalizedSearchQuery = searchQuery.trim().toLowerCase()
   const matchingFileNodeIds = useMemo(() => {
@@ -1638,6 +1814,11 @@ function App() {
     hasBaselineGraphSnapshot,
     newFileEdgeKeySet,
     newBlockPairSet,
+    branchDiffView,
+    gitBranchCompareReport,
+    highlightOnlyChangedBranchEdges,
+    branchDiffBucketByFileNodeId,
+    branchDiffBucketsByBlockId,
   ])
 
   const connectedNodeIds = useMemo(() => {
@@ -1703,6 +1884,10 @@ function App() {
         const isOutgoingRelated = outgoingRelatedNodeIds.has(node.id)
         const isArchitectureViolationNode = architectureViolationNodeIds.has(node.id)
         const isNewFileNode = node.id.startsWith('file:') && newFilePathSet.has(node.id.slice(5))
+        const branchDiffBucket = isFileNode ? branchDiffBucketByFileNodeId.get(node.id) : undefined
+        const isBranchDiffVisibleFile = isFileNode && branchDiffVisibleFileNodeIds.has(node.id)
+        const isBranchDiffVisibleBlock = !isFileNode && branchDiffVisibleBlockIds.has(node.id)
+        const isBranchDiffViewEnabled = branchDiffView !== 'off' && !!gitBranchCompareReport
         const nextStyle = {
           ...(node.style ?? {}),
           opacity: 1,
@@ -1720,6 +1905,32 @@ function App() {
         }
         if (showBaselineDiff && hasBaselineGraphSnapshot && isFileNode && !isNewFileNode) {
           nextStyle.opacity = Math.min(nextStyle.opacity, 0.28)
+        }
+        if (isBranchDiffViewEnabled && !highlightOnlyChangedBranchEdges) {
+          if (isFileNode && !isBranchDiffVisibleFile) {
+            nextStyle.opacity = Math.min(nextStyle.opacity, 0.2)
+          }
+          if (!isFileNode && !isBranchDiffVisibleBlock) {
+            nextStyle.opacity = Math.min(nextStyle.opacity, 0.3)
+          }
+        }
+        if (!highlightOnlyChangedBranchEdges && !isSelected && isBranchDiffVisibleFile && branchDiffBucket) {
+          if (branchDiffBucket === 'added') {
+            nextStyle.border = '2px solid #38d39f'
+            nextStyle.boxShadow = '0 0 0 2px rgba(56, 211, 159, 0.28), 0 0 10px rgba(56, 211, 159, 0.18)'
+          } else if (branchDiffBucket === 'modified') {
+            nextStyle.border = '2px solid #ffd166'
+            nextStyle.boxShadow = '0 0 0 2px rgba(255, 209, 102, 0.3), 0 0 10px rgba(255, 209, 102, 0.16)'
+          } else if (branchDiffBucket === 'deleted') {
+            nextStyle.border = '2px solid #ff7d7d'
+            nextStyle.boxShadow = '0 0 0 2px rgba(255, 125, 125, 0.3), 0 0 10px rgba(255, 125, 125, 0.18)'
+          } else if (branchDiffBucket === 'renamed') {
+            nextStyle.border = '2px solid #8ac7ff'
+            nextStyle.boxShadow = '0 0 0 2px rgba(138, 199, 255, 0.3), 0 0 10px rgba(138, 199, 255, 0.16)'
+          }
+        } else if (!highlightOnlyChangedBranchEdges && !isSelected && isBranchDiffVisibleBlock) {
+          nextStyle.outline = '1px solid rgba(255, 209, 102, 0.55)'
+          nextStyle.outlineOffset = '1px'
         }
         if (selectedNodeId && isSelected) {
           nextStyle.border = '2px solid #ffe79f'
@@ -1748,7 +1959,7 @@ function App() {
           }
           nextStyle.outline = '1px solid rgba(255, 107, 154, 0.95)'
           nextStyle.outlineOffset = '1px'
-        } else {
+        } else if (!(!highlightOnlyChangedBranchEdges && isBranchDiffViewEnabled && !isFileNode && isBranchDiffVisibleBlock && !isSelected)) {
           nextStyle.outline = 'none'
         }
         return {
@@ -1774,12 +1985,18 @@ function App() {
     hasBaselineGraphSnapshot,
     newFilePathSet,
     diffRelevantNodeIds,
+    branchDiffView,
+    gitBranchCompareReport,
+    highlightOnlyChangedBranchEdges,
+    branchDiffBucketByFileNodeId,
+    branchDiffVisibleFileNodeIds,
+    branchDiffVisibleBlockIds,
   ])
 
   const displayEdges = useMemo<Edge[]>(() => {
     const edgeRenderToken = `${routingStyle}|${busDisplayMode}|${selectedNodeId ?? 'none'}|${directionFilter}|${edgeColorPriority}|${
       showBaselineDiff ? 'diff-on' : 'diff-off'
-    }|${showOnlyNewDiff ? 'only-new' : 'all-diff'}`
+    }|${showOnlyNewDiff ? 'only-new' : 'all-diff'}|branch-${branchDiffView}`
     const nodeById = new Map(visibleNodes.map((node) => [node.id, node]))
     const parentById = new Map<string, string>()
     for (const node of visibleNodes) {
@@ -2062,6 +2279,19 @@ function App() {
     }
 
     const selectedLogicalEdgeIds = selectedNodeId ? new Set(visibleEdges.map((edge) => edge.id)) : new Set<string>()
+    const isBranchOverlayEnabled = branchDiffView !== 'off' && !!gitBranchCompareReport
+    const getBranchColor = (bucket: Exclude<BranchDiffView, 'off' | 'all'>) => {
+      if (bucket === 'added') {
+        return '#38d39f'
+      }
+      if (bucket === 'deleted') {
+        return '#ff7d7d'
+      }
+      if (bucket === 'renamed') {
+        return '#8ac7ff'
+      }
+      return '#ffd166'
+    }
 
     const preparedEdges: Edge[] = []
     for (const edge of visibleEdges) {
@@ -2088,6 +2318,29 @@ function App() {
         (architectureViolationBlockPairCount.get(`${edge.source}->${edge.target}`) ?? 0) > 0
       const isArchitectureViolationEdge = isFileViolationEdge || isBlockViolationEdge
       const isNewDiffEdge = showBaselineDiff && hasBaselineGraphSnapshot && (isNewFileEdge || isNewBlockEdge)
+      const fileBranchBucket =
+        edge.source.startsWith('file:') && edge.target.startsWith('file:')
+          ? mergeBranchDiffBuckets(
+              branchDiffBucketByFileNodeId.get(edge.source),
+              branchDiffBucketByFileNodeId.get(edge.target),
+            )
+          : null
+      const blockBranchBucket =
+        edge.source.startsWith('block:') && edge.target.startsWith('block:')
+          ? mergeBranchDiffBuckets(
+              branchDiffBucketsByBlockId.get(edge.source),
+              branchDiffBucketsByBlockId.get(edge.target),
+            )
+          : null
+      const branchEdgeBucket = fileBranchBucket ?? blockBranchBucket
+      const isBranchEdgeMatch = isBranchOverlayEnabled
+        ? branchDiffView === 'all'
+          ? !!branchEdgeBucket
+          : branchEdgeBucket === branchDiffView
+        : false
+      if (isBranchOverlayEnabled && highlightOnlyChangedBranchEdges && !isBranchEdgeMatch) {
+        continue
+      }
 
       const dependencyKind = edge.data?.dependencyKind as DependencyEdge['kind'] | undefined
       const kindColor = dependencyKind === 'type' ? '#b792ff' : dependencyKind === 're-export' ? '#59ccff' : '#7ea3bd'
@@ -2097,7 +2350,9 @@ function App() {
       let strokeOpacity = 1
 
       if (selectedNodeId && isConnected) {
-        if (isNewDiffEdge) {
+        if (isBranchEdgeMatch && branchEdgeBucket) {
+          color = getBranchColor(branchEdgeBucket)
+        } else if (isNewDiffEdge) {
           color = '#57e6ff'
         } else if (isArchitectureViolationEdge && highlightArchitectureViolations) {
           color = '#ff6b9a'
@@ -2114,10 +2369,12 @@ function App() {
         }
         strokeWidth = Math.max(
           strokeWidth,
-          isNewDiffEdge ? 2.8 : isArchitectureViolationEdge && highlightArchitectureViolations ? 2.8 : 2,
+          isBranchEdgeMatch ? 2.8 : isNewDiffEdge ? 2.8 : isArchitectureViolationEdge && highlightArchitectureViolations ? 2.8 : 2,
         )
       } else if (isCycleColored) {
         color = String(edge.style?.stroke)
+      } else if (isBranchEdgeMatch && branchEdgeBucket) {
+        color = getBranchColor(branchEdgeBucket)
       } else {
         color = isNewDiffEdge ? '#57e6ff' : isArchitectureViolationEdge && highlightArchitectureViolations ? '#ff6b9a' : kindColor
       }
@@ -2127,8 +2384,14 @@ function App() {
       }
       if (isNewDiffEdge) {
         strokeWidth = Math.max(strokeWidth, 2.6)
+      }
+      if (isBranchEdgeMatch) {
+        strokeWidth = Math.max(strokeWidth, 2.6)
       } else if (showBaselineDiff && hasBaselineGraphSnapshot) {
         strokeOpacity = 0.22
+      }
+      if (isBranchOverlayEnabled && !isBranchEdgeMatch) {
+        strokeOpacity = Math.min(strokeOpacity, 0.18)
       }
 
       const baseEdge: Edge = {
@@ -2294,6 +2557,8 @@ function App() {
     setEdgeColorPriority('direction')
     setShowBaselineDiff(false)
     setShowOnlyNewDiff(false)
+    setBranchDiffView('off')
+    setHighlightOnlyChangedBranchEdges(false)
     setSearchQuery('')
     setHoveredFilePath(null)
     setIsCanvasLocked(false)
@@ -2742,6 +3007,36 @@ function App() {
     }
   }
 
+  async function importGitBranchCompareReport(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0]
+    if (!file) {
+      return
+    }
+    try {
+      const raw = await file.text()
+      const parsed = JSON.parse(raw) as unknown
+      if (!isGitBranchCompareReportCandidate(parsed)) {
+        setGitBranchCompareReportError('Selected file is not a valid git branch compare report JSON.')
+        setGitBranchCompareReport(null)
+        setGitBranchCompareReportName(null)
+        setBranchDiffView('off')
+        setHighlightOnlyChangedBranchEdges(false)
+        return
+      }
+      setGitBranchCompareReport(parsed)
+      setGitBranchCompareReportName(file.name)
+      setGitBranchCompareReportError(null)
+    } catch {
+      setGitBranchCompareReportError('Failed to import git branch compare report (invalid JSON or unreadable file).')
+      setGitBranchCompareReport(null)
+      setGitBranchCompareReportName(null)
+      setBranchDiffView('off')
+      setHighlightOnlyChangedBranchEdges(false)
+    } finally {
+      event.target.value = ''
+    }
+  }
+
   useEffect(() => {
     if (!flowGraph || graphMode !== 'file-level') {
       return
@@ -3067,6 +3362,55 @@ function App() {
             </div>
 
             <div className="section-card">
+              <h2>Git Branch Compare</h2>
+              <p>Import branch compare JSON generated via `npm run git-compare`.</p>
+              <div className="actions">
+                <input type="file" accept=".json,application/json" onChange={importGitBranchCompareReport} />
+                <button
+                  type="button"
+                  onClick={() => {
+                    setGitBranchCompareReport(null)
+                    setGitBranchCompareReportName(null)
+                    setGitBranchCompareReportError(null)
+                    setBranchDiffView('off')
+                    setHighlightOnlyChangedBranchEdges(false)
+                  }}
+                  disabled={!gitBranchCompareReport}
+                >
+                  Clear compare
+                </button>
+              </div>
+              {gitBranchCompareReportName && (
+                <p>
+                  <strong>Loaded:</strong> {gitBranchCompareReportName}
+                </p>
+              )}
+              {gitBranchCompareReport && (
+                <p>
+                  <strong>Range:</strong> {gitBranchCompareReport.baseRef}...{gitBranchCompareReport.targetRef} |{' '}
+                  <strong>Changed files:</strong> {gitBranchCompareReport.summary.changedFiles} | <strong>Churn:</strong>{' '}
+                  {gitBranchCompareReport.summary.totalChurn}
+                </p>
+              )}
+              {gitBranchCompareReportError && <p className="error">{gitBranchCompareReportError}</p>}
+              {branchCompareHotFiles.length > 0 && (
+                <>
+                  <h2>Changed Hotspots</h2>
+                  <ul className="quick-action-list">
+                    {branchCompareHotFiles.slice(0, 8).map((item) => (
+                      <li key={`branch-compare-${item.path}`}>
+                        <code>{item.path}</code>
+                        <button type="button" className="quick-action-button" onClick={() => focusFileOnBoard(item.path)}>
+                          Show on Board
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </>
+              )}
+            </div>
+
+            <div className="section-card">
               <h2>Code Health (MVP)</h2>
               <p>
                 <strong>Hotspots:</strong> {hotspotFiles.length}
@@ -3276,6 +3620,16 @@ function App() {
                       )
                       .join('\n')}`
                   : '\n- churn report not loaded'}
+                {'\n\n'}
+                Branch compare hotspots (weighted by centrality):
+                {branchCompareHotFiles.length > 0
+                  ? `\n${branchCompareHotFiles
+                      .map(
+                        (item) =>
+                          `- ${item.path} | ${item.changeType} | weighted=${item.weighted} | churn=${item.churn} | +${item.additions}/-${item.deletions} | centrality=${item.centrality}`,
+                      )
+                      .join('\n')}`
+                  : '\n- branch compare report not loaded'}
               </pre>
             </div>
 
@@ -3577,6 +3931,36 @@ function App() {
                 Show only new
               </label>
               <label className="toggle-row">
+                Branch diff
+                <select
+                  value={branchDiffView}
+                  onChange={(event) => {
+                    const next = event.target.value as BranchDiffView
+                    setBranchDiffView(next)
+                    if (next === 'off') {
+                      setHighlightOnlyChangedBranchEdges(false)
+                    }
+                  }}
+                  disabled={!gitBranchCompareReport}
+                >
+                  <option value="off">off</option>
+                  <option value="all">all changed</option>
+                  <option value="added">added</option>
+                  <option value="modified">modified</option>
+                  <option value="deleted">deleted</option>
+                  <option value="renamed">renamed</option>
+                </select>
+              </label>
+              <label className="toggle-row">
+                <input
+                  type="checkbox"
+                  checked={highlightOnlyChangedBranchEdges}
+                  onChange={(event) => setHighlightOnlyChangedBranchEdges(event.target.checked)}
+                  disabled={!gitBranchCompareReport || branchDiffView === 'off'}
+                />
+                Highlight only changed edges
+              </label>
+              <label className="toggle-row">
                 Direction
                 <select
                   value={directionFilter}
@@ -3741,6 +4125,22 @@ function App() {
                 New vs baseline
               </span>
               <span className="legend-item">
+                <span className="legend-swatch legend-swatch-branch-added" />
+                Branch: added
+              </span>
+              <span className="legend-item">
+                <span className="legend-swatch legend-swatch-branch-modified" />
+                Branch: modified
+              </span>
+              <span className="legend-item">
+                <span className="legend-swatch legend-swatch-branch-deleted" />
+                Branch: deleted
+              </span>
+              <span className="legend-item">
+                <span className="legend-swatch legend-swatch-branch-renamed" />
+                Branch: renamed
+              </span>
+              <span className="legend-item">
                 <span className="legend-swatch legend-swatch-import" />
                 Incoming (selected)
               </span>
@@ -3757,6 +4157,12 @@ function App() {
               {!hasBaselineGraphSnapshot && (
                 <span className="legend-note">Load baseline JSON in Diagnostics to enable diff mode.</span>
               )}
+              {!gitBranchCompareReport && (
+                <span className="legend-note">Load branch compare JSON in Diagnostics to enable branch overlay.</span>
+              )}
+              {gitBranchCompareReport && branchDiffView !== 'off' && highlightOnlyChangedBranchEdges && (
+                <span className="legend-note">`Highlight only changed edges` hides non-matching edges and keeps nodes unchanged.</span>
+              )}
             </div>
           </div>
           <div className="board-main">
@@ -3766,6 +4172,9 @@ function App() {
                   Blocks: {flowGraph.blockCount}, Nodes: {flowGraph.nodes.length}, Visible edges: {displayEdges.length}
                   {' | '}Cycles: {flowGraph.cycleEdgeCount}
                   {' | '}Matches: {matchingFileNodeIds.size}
+                  {gitBranchCompareReport && branchDiffView !== 'off'
+                    ? ` | Branch matches: ${branchDiffVisibleFileNodeIds.size}`
+                    : ''}
                   {isLayouting ? ' | Layout: running...' : ' | Layout: ELK ready'}
                 </p>
                 <div className="canvas-shell">
