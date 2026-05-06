@@ -1,5 +1,4 @@
-import type { Edge, EdgeTypes, Node, NodeMouseHandler, NodeTypes, Viewport } from '@xyflow/react'
-import type { RefObject } from 'react'
+import type { Edge, EdgeTypes, Node, NodeMouseHandler, NodeTypes } from '@xyflow/react'
 import type { BuiltGraph, FolderPackingMode, GraphBuildMode, RoutingStyle } from '../../lib/graph-builder'
 import type {
   ArchitectureViolation,
@@ -83,17 +82,10 @@ export type BoardProps = {
   isLayouting: boolean
   architectureViolations: ArchitectureViolation[]
 
-  // Canvas interaction
-  canvasShellRef: RefObject<HTMLDivElement | null>
-  toggleCanvasFullscreen: () => void
-  isCanvasFullscreen: boolean
+  // Canvas interaction (selection-only handlers; ref/lock/fullscreen/viewport are local to Board).
   onNodeClick: NodeMouseHandler
   onNodeMouseEnter: NodeMouseHandler
   onNodeMouseLeave: NodeMouseHandler
-  isCanvasLocked: boolean
-  setIsCanvasLocked: (updater: (previous: boolean) => boolean) => void
-  savedViewport: Viewport | null
-  setSavedViewport: (value: Viewport) => void
 
   // Bottom strips / IO panel
   selectedInfoLine: string

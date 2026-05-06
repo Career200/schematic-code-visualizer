@@ -1,4 +1,17 @@
+import { useState, type ChangeEvent } from 'react'
+import type {
+  AnalysisExportReport,
+  GitBranchCompareReport,
+  GitChurnReport,
+  GitLiveCommit,
+  GitLiveRefsResponse,
+} from '../../types'
 import { architectureConfigDescription } from '../../utils/architecture-config-description'
+import { isAnalysisExportReportCandidate } from '../../utils/is-analysis-export-report-candidate'
+import { isGitBranchCompareReportCandidate } from '../../utils/is-git-branch-compare-report-candidate'
+import { isGitChurnReportCandidate } from '../../utils/is-git-churn-report-candidate'
+import { isGitLiveLogResponseCandidate } from '../../utils/is-git-live-log-response-candidate'
+import { isGitLiveRefsResponseCandidate } from '../../utils/is-git-live-refs-response-candidate'
 import type { DiagnosticsProps } from './types'
 
 export function Diagnostics({
@@ -7,49 +20,15 @@ export function Diagnostics({
   scanResult,
   exportAnalysisReportJson,
   exportAnalysisReportMarkdown,
-  importBaselineReport,
   baselineReport,
   setBaselineReport,
-  baselineReportName,
-  setBaselineReportName,
-  baselineReportError,
-  setBaselineReportError,
   baselineDelta,
-  importGitChurnReport,
   gitChurnReport,
   setGitChurnReport,
-  gitChurnReportName,
-  setGitChurnReportName,
-  gitChurnReportError,
-  setGitChurnReportError,
   churnHotFiles,
-  gitLiveApiBase,
-  setGitLiveApiBase,
-  gitLiveRepoPath,
-  setGitLiveRepoPath,
-  fetchGitLiveRefs,
-  runGitLiveCompare,
-  isGitLiveLoading,
-  gitLiveRefs,
-  gitLiveBaseRef,
-  setGitLiveBaseRef,
-  gitLiveTargetRef,
-  setGitLiveTargetRef,
-  refreshGitLiveCommits,
-  gitLiveBaseCommitOverride,
-  setGitLiveBaseCommitOverride,
-  gitLiveTargetCommitOverride,
-  setGitLiveTargetCommitOverride,
-  gitLiveBaseCommits,
-  gitLiveTargetCommits,
-  gitLiveError,
-  importGitBranchCompareReport,
   gitBranchCompareReport,
   setGitBranchCompareReport,
-  gitBranchCompareReportName,
-  setGitBranchCompareReportName,
-  gitBranchCompareReportError,
-  setGitBranchCompareReportError,
+  branchDiffView,
   setBranchDiffView,
   setHighlightOnlyChangedBranchEdges,
   branchCompareHotFiles,
@@ -75,6 +54,205 @@ export function Diagnostics({
   hoveredFileAnalysis,
   focusFileOnBoard,
 }: DiagnosticsProps) {
+  // Per-tab UI state for the report-name / error labels and the live-git workflow.
+  const [baselineReportName, setBaselineReportName] = useState<string | null>(null)
+  const [baselineReportError, setBaselineReportError] = useState<string | null>(null)
+  const [gitChurnReportName, setGitChurnReportName] = useState<string | null>(null)
+  const [gitChurnReportError, setGitChurnReportError] = useState<string | null>(null)
+  const [gitBranchCompareReportName, setGitBranchCompareReportName] = useState<string | null>(null)
+  const [gitBranchCompareReportError, setGitBranchCompareReportError] = useState<string | null>(null)
+
+  const [gitLiveApiBase, setGitLiveApiBase] = useState('http://127.0.0.1:3031')
+  const [gitLiveRepoPath, setGitLiveRepoPath] = useState('')
+  const [gitLiveRefs, setGitLiveRefs] = useState<GitLiveRefsResponse | null>(null)
+  const [gitLiveBaseRef, setGitLiveBaseRef] = useState('main')
+  const [gitLiveTargetRef, setGitLiveTargetRef] = useState('HEAD')
+  const [gitLiveBaseCommits, setGitLiveBaseCommits] = useState<GitLiveCommit[]>([])
+  const [gitLiveTargetCommits, setGitLiveTargetCommits] = useState<GitLiveCommit[]>([])
+  const [gitLiveBaseCommitOverride, setGitLiveBaseCommitOverride] = useState('')
+  const [gitLiveTargetCommitOverride, setGitLiveTargetCommitOverride] = useState('')
+  const [isGitLiveLoading, setIsGitLiveLoading] = useState(false)
+  const [gitLiveError, setGitLiveError] = useState<string | null>(null)
+
+  function buildGitLiveUrl(path: string, params: Record<string, string>) {
+    const normalizedBase = gitLiveApiBase.trim().replace(/\/+$/, '')
+    const url = new URL(`${normalizedBase}${path}`)
+    for (const [key, value] of Object.entries(params)) {
+      url.searchParams.set(key, value)
+    }
+    return url.toString()
+  }
+
+  async function fetchGitLiveCommitsFor(side: 'base' | 'target', ref: string) {
+    if (!gitLiveRepoPath.trim()) return
+    const response = await fetch(buildGitLiveUrl('/api/git/log', { repo: gitLiveRepoPath.trim(), ref, limit: '60' }))
+    const parsed = (await response.json()) as unknown
+    if (!response.ok) {
+      throw new Error((parsed as { error?: string })?.error ?? `Git live log error (${response.status}).`)
+    }
+    if (!isGitLiveLogResponseCandidate(parsed)) {
+      throw new Error('Invalid log response from git live server.')
+    }
+    if (side === 'base') setGitLiveBaseCommits(parsed.commits)
+    else setGitLiveTargetCommits(parsed.commits)
+  }
+
+  async function fetchGitLiveRefs() {
+    if (!gitLiveRepoPath.trim()) {
+      setGitLiveError('Set local git repository path first.')
+      return
+    }
+    setIsGitLiveLoading(true)
+    setGitLiveError(null)
+    try {
+      const response = await fetch(buildGitLiveUrl('/api/git/refs', { repo: gitLiveRepoPath.trim() }))
+      const parsed = (await response.json()) as unknown
+      if (!response.ok) {
+        throw new Error((parsed as { error?: string })?.error ?? `Git live refs error (${response.status}).`)
+      }
+      if (!isGitLiveRefsResponseCandidate(parsed)) {
+        throw new Error('Invalid refs response from git live server.')
+      }
+      setGitLiveRefs(parsed)
+      const fallbackBase = parsed.currentBranch || parsed.branches[0] || 'main'
+      setGitLiveBaseRef(fallbackBase)
+      setGitLiveTargetRef('HEAD')
+      setGitLiveBaseCommitOverride('')
+      setGitLiveTargetCommitOverride('')
+      await Promise.all([fetchGitLiveCommitsFor('base', fallbackBase), fetchGitLiveCommitsFor('target', 'HEAD')])
+    } catch (error) {
+      setGitLiveError(error instanceof Error ? error.message : 'Failed to load refs from git live server.')
+    } finally {
+      setIsGitLiveLoading(false)
+    }
+  }
+
+  async function refreshGitLiveCommits(side: 'base' | 'target') {
+    const ref = side === 'base' ? gitLiveBaseRef : gitLiveTargetRef
+    setIsGitLiveLoading(true)
+    setGitLiveError(null)
+    try {
+      await fetchGitLiveCommitsFor(side, ref)
+      if (side === 'base') setGitLiveBaseCommitOverride('')
+      else setGitLiveTargetCommitOverride('')
+    } catch (error) {
+      setGitLiveError(error instanceof Error ? error.message : 'Failed to load commit history from git live server.')
+    } finally {
+      setIsGitLiveLoading(false)
+    }
+  }
+
+  async function runGitLiveCompare() {
+    if (!gitLiveRepoPath.trim()) {
+      setGitLiveError('Set local git repository path first.')
+      return
+    }
+    const base = gitLiveBaseCommitOverride || gitLiveBaseRef
+    const target = gitLiveTargetCommitOverride || gitLiveTargetRef
+    if (!base || !target) {
+      setGitLiveError('Select base and target refs/commits.')
+      return
+    }
+    setIsGitLiveLoading(true)
+    setGitLiveError(null)
+    try {
+      const response = await fetch(buildGitLiveUrl('/api/git/compare', { repo: gitLiveRepoPath.trim(), base, target }))
+      const parsed = (await response.json()) as unknown
+      if (!response.ok) {
+        throw new Error((parsed as { error?: string })?.error ?? `Git live compare error (${response.status}).`)
+      }
+      if (!isGitBranchCompareReportCandidate(parsed)) {
+        throw new Error('Invalid compare response from git live server.')
+      }
+      setGitBranchCompareReport(parsed)
+      setGitBranchCompareReportName(`live:${base}...${target}`)
+      setGitBranchCompareReportError(null)
+      if (branchDiffView === 'off') {
+        setBranchDiffView('all')
+      }
+    } catch (error) {
+      setGitLiveError(error instanceof Error ? error.message : 'Failed to compare refs via git live server.')
+    } finally {
+      setIsGitLiveLoading(false)
+    }
+  }
+
+  async function importBaselineReport(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0]
+    if (!file) return
+    try {
+      const raw = await file.text()
+      const parsed = JSON.parse(raw) as unknown
+      if (!isAnalysisExportReportCandidate(parsed)) {
+        setBaselineReportError('Selected file is not a valid analysis report JSON.')
+        setBaselineReport(null)
+        setBaselineReportName(null)
+        return
+      }
+      setBaselineReport(parsed satisfies AnalysisExportReport)
+      setBaselineReportName(file.name)
+      setBaselineReportError(null)
+    } catch {
+      setBaselineReportError('Failed to import baseline report (invalid JSON or unreadable file).')
+      setBaselineReport(null)
+      setBaselineReportName(null)
+    } finally {
+      event.target.value = ''
+    }
+  }
+
+  async function importGitChurnReport(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0]
+    if (!file) return
+    try {
+      const raw = await file.text()
+      const parsed = JSON.parse(raw) as unknown
+      if (!isGitChurnReportCandidate(parsed)) {
+        setGitChurnReportError('Selected file is not a valid git churn report JSON.')
+        setGitChurnReport(null)
+        setGitChurnReportName(null)
+        return
+      }
+      setGitChurnReport(parsed satisfies GitChurnReport)
+      setGitChurnReportName(file.name)
+      setGitChurnReportError(null)
+    } catch {
+      setGitChurnReportError('Failed to import git churn report (invalid JSON or unreadable file).')
+      setGitChurnReport(null)
+      setGitChurnReportName(null)
+    } finally {
+      event.target.value = ''
+    }
+  }
+
+  async function importGitBranchCompareReport(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0]
+    if (!file) return
+    try {
+      const raw = await file.text()
+      const parsed = JSON.parse(raw) as unknown
+      if (!isGitBranchCompareReportCandidate(parsed)) {
+        setGitBranchCompareReportError('Selected file is not a valid git branch compare report JSON.')
+        setGitBranchCompareReport(null)
+        setGitBranchCompareReportName(null)
+        setBranchDiffView('off')
+        setHighlightOnlyChangedBranchEdges(false)
+        return
+      }
+      setGitBranchCompareReport(parsed satisfies GitBranchCompareReport)
+      setGitBranchCompareReportName(file.name)
+      setGitBranchCompareReportError(null)
+    } catch {
+      setGitBranchCompareReportError('Failed to import git branch compare report (invalid JSON or unreadable file).')
+      setGitBranchCompareReport(null)
+      setGitBranchCompareReportName(null)
+      setBranchDiffView('off')
+      setHighlightOnlyChangedBranchEdges(false)
+    } finally {
+      event.target.value = ''
+    }
+  }
+
   return (
     <section className="panel grid diagnostics-grid">
       <div className="stats">

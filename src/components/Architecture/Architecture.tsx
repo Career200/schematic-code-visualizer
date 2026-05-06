@@ -1,4 +1,10 @@
-import { ARCHITECTURE_MATCHER_LAYERS, ARCHITECTURE_RULE_LAYERS } from '../../constants'
+import { useState } from 'react'
+import {
+  ARCHITECTURE_MATCHER_LAYERS,
+  ARCHITECTURE_RULE_LAYERS,
+  ARCHITECTURE_STORAGE_KEY,
+  DEFAULT_ARCHITECTURE_CONFIG,
+} from '../../constants'
 import type { DependencyEdge, DependencyGraph, ScannedProject } from '../../lib/models'
 import type {
   ArchitectureConfig,
@@ -6,6 +12,7 @@ import type {
   ArchitectureLayerId,
   ArchitectureViolation,
 } from '../../types'
+import { normalizeArchitectureConfig } from '../../utils/normalize-architecture-config'
 
 type ArchitectureProps = {
   architectureRuleLines: string[]
@@ -14,19 +21,7 @@ type ArchitectureProps = {
   architectureLayerDistribution: Record<ArchitectureLayerId, number>
   architectureViolationByPair: Array<[string, number]>
   architectureConfig: ArchitectureConfig
-  architectureConfigMode: ArchitectureConfigMode
-  setArchitectureConfigMode: (mode: ArchitectureConfigMode) => void
-  architectureConfigDraft: string
-  setArchitectureConfigDraft: (value: string) => void
-  architectureConfigError: string | null
-  applyArchitectureConfigDraft: () => void
-  resetArchitectureConfig: () => void
-  updateArchitectureMatchers: (layer: ArchitectureLayerId, value: string) => void
-  updateArchitectureAllowedTarget: (
-    fromLayer: ArchitectureLayerId,
-    toLayer: ArchitectureLayerId,
-    nextEnabled: boolean,
-  ) => void
+  setArchitectureConfig: (config: ArchitectureConfig) => void
   exportArchitectureReportJson: () => void
   exportArchitectureReportMarkdown: () => void
   focusViolationOnBoard: (item: ArchitectureViolation) => void
@@ -41,21 +36,85 @@ export function Architecture({
   architectureLayerDistribution,
   architectureViolationByPair,
   architectureConfig,
-  architectureConfigMode,
-  setArchitectureConfigMode,
-  architectureConfigDraft,
-  setArchitectureConfigDraft,
-  architectureConfigError,
-  applyArchitectureConfigDraft,
-  resetArchitectureConfig,
-  updateArchitectureMatchers,
-  updateArchitectureAllowedTarget,
+  setArchitectureConfig,
   exportArchitectureReportJson,
   exportArchitectureReportMarkdown,
   focusViolationOnBoard,
   scanResult,
   dependencyGraph,
 }: ArchitectureProps) {
+  const [architectureConfigMode, setArchitectureConfigMode] = useState<ArchitectureConfigMode>('visual')
+  const [architectureConfigDraft, setArchitectureConfigDraft] = useState(() =>
+    JSON.stringify(architectureConfig, null, 2),
+  )
+  const [architectureConfigError, setArchitectureConfigError] = useState<string | null>(null)
+
+  function applyArchitectureConfig(nextConfig: ArchitectureConfig) {
+    setArchitectureConfig(nextConfig)
+    setArchitectureConfigDraft(JSON.stringify(nextConfig, null, 2))
+    setArchitectureConfigError(null)
+    if (typeof window !== 'undefined') {
+      window.localStorage.setItem(ARCHITECTURE_STORAGE_KEY, JSON.stringify(nextConfig))
+    }
+  }
+
+  function applyArchitectureConfigDraft() {
+    try {
+      const parsed = JSON.parse(architectureConfigDraft) as unknown
+      const normalized = normalizeArchitectureConfig(parsed)
+      if (!normalized) {
+        setArchitectureConfigError('Invalid config shape. Check layer names and allowed targets.')
+        return
+      }
+      applyArchitectureConfig(normalized)
+    } catch {
+      setArchitectureConfigError('Invalid JSON format for architecture config.')
+    }
+  }
+
+  function updateArchitectureAllowedTarget(
+    fromLayer: ArchitectureLayerId,
+    toLayer: ArchitectureLayerId,
+    isAllowed: boolean,
+  ) {
+    const existing = architectureConfig.allowedTargets[fromLayer]
+    const nextTargets = isAllowed
+      ? [...new Set([...existing, toLayer])]
+      : existing.filter((item) => item !== toLayer)
+    if (nextTargets.length === 0) {
+      setArchitectureConfigError(`Layer "${fromLayer}" must allow at least one target layer.`)
+      return
+    }
+    applyArchitectureConfig({
+      ...architectureConfig,
+      allowedTargets: {
+        ...architectureConfig.allowedTargets,
+        [fromLayer]: nextTargets,
+      },
+    })
+  }
+
+  function updateArchitectureMatchers(layer: ArchitectureLayerId, csvValue: string) {
+    const nextMatchers = csvValue
+      .split(',')
+      .map((item) => item.trim().toLowerCase())
+      .filter(Boolean)
+    applyArchitectureConfig({
+      ...architectureConfig,
+      layerMatchers: {
+        ...architectureConfig.layerMatchers,
+        [layer]: [...new Set(nextMatchers)],
+      },
+    })
+  }
+
+  function resetArchitectureConfig() {
+    applyArchitectureConfig(DEFAULT_ARCHITECTURE_CONFIG)
+    if (typeof window !== 'undefined') {
+      window.localStorage.removeItem(ARCHITECTURE_STORAGE_KEY)
+    }
+  }
+
   return (
     <section className="panel grid architecture-grid">
       <div className="stats">

@@ -1,4 +1,5 @@
-import { Background, MiniMap, ReactFlow } from '@xyflow/react'
+import { useEffect, useRef, useState } from 'react'
+import { Background, MiniMap, ReactFlow, type Viewport } from '@xyflow/react'
 import { CanvasNavWheel } from '../CanvasNavWheel'
 import type { BoardProps } from './types'
 
@@ -59,22 +60,38 @@ export function Board({
   matchingFileNodeIds,
   isLayouting,
   architectureViolations,
-  canvasShellRef,
-  toggleCanvasFullscreen,
-  isCanvasFullscreen,
   onNodeClick,
   onNodeMouseEnter,
   onNodeMouseLeave,
-  isCanvasLocked,
-  setIsCanvasLocked,
-  savedViewport,
-  setSavedViewport,
   selectedInfoLine,
   hoverInfoLine,
   selectedFilePath,
   selectedImportedFiles,
   selectedImportedByFiles,
 }: BoardProps) {
+  const canvasShellRef = useRef<HTMLDivElement | null>(null)
+  const [isCanvasFullscreen, setIsCanvasFullscreen] = useState(false)
+  const [isCanvasLocked, setIsCanvasLocked] = useState(false)
+  const [savedViewport, setSavedViewport] = useState<Viewport | null>(null)
+
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      setIsCanvasFullscreen(document.fullscreenElement === canvasShellRef.current)
+    }
+    document.addEventListener('fullscreenchange', handleFullscreenChange)
+    return () => document.removeEventListener('fullscreenchange', handleFullscreenChange)
+  }, [])
+
+  const toggleCanvasFullscreen = () => {
+    const element = canvasShellRef.current
+    if (!element) return
+    if (document.fullscreenElement === element) {
+      void document.exitFullscreen()
+    } else {
+      void element.requestFullscreen()
+    }
+  }
+
   return (
     <section className="panel grid board-grid">
       <div className="stats board-sidebar">

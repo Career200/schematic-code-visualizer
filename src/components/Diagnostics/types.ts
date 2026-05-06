@@ -1,6 +1,6 @@
-import type { ChangeEvent } from 'react'
 import type { DependencyEdge, DependencyGraph, FileAnalysis, ScannedProject } from '../../lib/models'
 import type {
+  AnalysisExportReport,
   ArchitectureConfig,
   ArchitectureLayerId,
   ArchitectureViolation,
@@ -8,8 +8,6 @@ import type {
   CycleGroup,
   GitBranchCompareReport,
   GitChurnReport,
-  GitLiveCommit,
-  GitLiveRefsResponse,
 } from '../../types'
 
 export type HotspotFile = { path: string; score: number; incoming: number; outgoing: number; loc: number }
@@ -75,56 +73,20 @@ export type DiagnosticsProps = {
   exportAnalysisReportJson: () => void
   exportAnalysisReportMarkdown: () => void
 
-  // Baseline compare
-  importBaselineReport: (event: ChangeEvent<HTMLInputElement>) => void
-  baselineReport: unknown
-  setBaselineReport: (value: null) => void
-  baselineReportName: string | null
-  setBaselineReportName: (value: null) => void
-  baselineReportError: string | null
-  setBaselineReportError: (value: null) => void
+  // Baseline compare (report itself stays in App for downstream computation)
+  baselineReport: AnalysisExportReport | null
+  setBaselineReport: (value: AnalysisExportReport | null) => void
   baselineDelta: BaselineDelta | null
 
-  // Git churn
-  importGitChurnReport: (event: ChangeEvent<HTMLInputElement>) => void
+  // Git churn (report itself stays in App; consumed by hot-files memo there)
   gitChurnReport: GitChurnReport | null
-  setGitChurnReport: (value: null) => void
-  gitChurnReportName: string | null
-  setGitChurnReportName: (value: null) => void
-  gitChurnReportError: string | null
-  setGitChurnReportError: (value: null) => void
+  setGitChurnReport: (value: GitChurnReport | null) => void
   churnHotFiles: ChurnHotFile[]
 
-  // Git live compare
-  gitLiveApiBase: string
-  setGitLiveApiBase: (value: string) => void
-  gitLiveRepoPath: string
-  setGitLiveRepoPath: (value: string) => void
-  fetchGitLiveRefs: () => void
-  runGitLiveCompare: () => void
-  isGitLiveLoading: boolean
-  gitLiveRefs: GitLiveRefsResponse | null
-  gitLiveBaseRef: string
-  setGitLiveBaseRef: (value: string) => void
-  gitLiveTargetRef: string
-  setGitLiveTargetRef: (value: string) => void
-  refreshGitLiveCommits: (which: 'base' | 'target') => void
-  gitLiveBaseCommitOverride: string
-  setGitLiveBaseCommitOverride: (value: string) => void
-  gitLiveTargetCommitOverride: string
-  setGitLiveTargetCommitOverride: (value: string) => void
-  gitLiveBaseCommits: GitLiveCommit[]
-  gitLiveTargetCommits: GitLiveCommit[]
-  gitLiveError: string | null
-
-  // Branch compare report
-  importGitBranchCompareReport: (event: ChangeEvent<HTMLInputElement>) => void
+  // Branch compare report (shared with Board)
   gitBranchCompareReport: GitBranchCompareReport | null
-  setGitBranchCompareReport: (value: null) => void
-  gitBranchCompareReportName: string | null
-  setGitBranchCompareReportName: (value: null) => void
-  gitBranchCompareReportError: string | null
-  setGitBranchCompareReportError: (value: null) => void
+  setGitBranchCompareReport: (value: GitBranchCompareReport | null) => void
+  branchDiffView: BranchDiffView
   setBranchDiffView: (value: BranchDiffView) => void
   setHighlightOnlyChangedBranchEdges: (value: boolean) => void
   branchCompareHotFiles: BranchCompareHotFile[]

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { Edge, NodeMouseHandler } from '@xyflow/react'
 import { About } from './components/About'
 import { Architecture } from './components/Architecture'
@@ -11,7 +11,6 @@ import { Diagnostics } from './components/Diagnostics'
 import { FolderBlockNode } from './components/FolderBlockNode'
 import { Overview } from './components/Overview'
 import { TabNav } from './components/TabNav'
-import type { StructureViewMode, TreemapMetricMode } from './components/ProjectStructureViz'
 import { analyzeProjectDependenciesInWorker } from './lib/analyzer-worker-client'
 import { computeBusRoutes } from './lib/bus-router'
 import { routeDirectOrthogonal } from './lib/direct-router'
@@ -33,7 +32,6 @@ import type {
   AnalysisExportReport,
   AppTab,
   ArchitectureConfig,
-  ArchitectureConfigMode,
   ArchitectureExportReport,
   ArchitectureLayerId,
   ArchitectureViolation,
@@ -43,8 +41,6 @@ import type {
   FolderControlMode,
   GitBranchCompareReport,
   GitChurnReport,
-  GitLiveCommit,
-  GitLiveRefsResponse,
   ManualFolderDepth,
 } from './types'
 
@@ -61,22 +57,13 @@ import { downloadTextFile } from './utils/download-text-file'
 import { findTopCycleGroups } from './utils/find-top-cycle-groups'
 import { getTopLevelBlockLabelForPath } from './utils/get-top-level-block-label-for-path'
 import { hashText } from './utils/hash-text'
-import { isAnalysisExportReportCandidate } from './utils/is-analysis-export-report-candidate'
 import { isArchitectureEdgeAllowed } from './utils/is-architecture-edge-allowed'
-import { isGitBranchCompareReportCandidate } from './utils/is-git-branch-compare-report-candidate'
-import { isGitChurnReportCandidate } from './utils/is-git-churn-report-candidate'
-import { isGitLiveLogResponseCandidate } from './utils/is-git-live-log-response-candidate'
-import { isGitLiveRefsResponseCandidate } from './utils/is-git-live-refs-response-candidate'
 import { mergeBranchDiffBuckets } from './utils/merge-branch-diff-buckets'
 import { normalizeArchitectureConfig } from './utils/normalize-architecture-config'
 import { toBranchDiffBucket } from './utils/to-branch-diff-bucket'
 
 function App() {
   const [activeTab, setActiveTab] = useState<AppTab>('overview')
-  const canvasShellRef = useRef<HTMLDivElement | null>(null)
-  const [isCanvasFullscreen, setIsCanvasFullscreen] = useState(false)
-  const [overviewStructureMode, setOverviewStructureMode] = useState<StructureViewMode>('treemap')
-  const [overviewTreemapMetric, setOverviewTreemapMetric] = useState<TreemapMetricMode>('files')
   const [scanResult, setScanResult] = useState<ScannedProject | null>(null)
   const [projectReadmeName, setProjectReadmeName] = useState<string | null>(null)
   const [projectReadmeContent, setProjectReadmeContent] = useState<string | null>(null)
@@ -103,38 +90,14 @@ function App() {
   const [manualFolderDepth, setManualFolderDepth] = useState<ManualFolderDepth>(2)
   const [folderControlMode, setFolderControlMode] = useState<FolderControlMode>('preset')
   const [architectureConfig, setArchitectureConfig] = useState<ArchitectureConfig>(DEFAULT_ARCHITECTURE_CONFIG)
-  const [architectureConfigMode, setArchitectureConfigMode] = useState<ArchitectureConfigMode>('visual')
-  const [architectureConfigDraft, setArchitectureConfigDraft] = useState(
-    JSON.stringify(DEFAULT_ARCHITECTURE_CONFIG, null, 2),
-  )
-  const [architectureConfigError, setArchitectureConfigError] = useState<string | null>(null)
   const [hoveredFilePath, setHoveredFilePath] = useState<string | null>(null)
-  const [isCanvasLocked, setIsCanvasLocked] = useState(false)
-  const [savedViewport, setSavedViewport] = useState<{ x: number; y: number; zoom: number } | null>(null)
   const [layoutedNodes, setLayoutedNodes] = useState<ReturnType<typeof buildDependencyFlowGraph>['nodes']>([])
   const [isLayouting, setIsLayouting] = useState(false)
   const [isScanning, setIsScanning] = useState(false)
   const [isAnalyzing, setIsAnalyzing] = useState(false)
   const [baselineReport, setBaselineReport] = useState<AnalysisExportReport | null>(null)
-  const [baselineReportName, setBaselineReportName] = useState<string | null>(null)
-  const [baselineReportError, setBaselineReportError] = useState<string | null>(null)
   const [gitChurnReport, setGitChurnReport] = useState<GitChurnReport | null>(null)
-  const [gitChurnReportName, setGitChurnReportName] = useState<string | null>(null)
-  const [gitChurnReportError, setGitChurnReportError] = useState<string | null>(null)
   const [gitBranchCompareReport, setGitBranchCompareReport] = useState<GitBranchCompareReport | null>(null)
-  const [gitBranchCompareReportName, setGitBranchCompareReportName] = useState<string | null>(null)
-  const [gitBranchCompareReportError, setGitBranchCompareReportError] = useState<string | null>(null)
-  const [gitLiveApiBase, setGitLiveApiBase] = useState('http://127.0.0.1:3031')
-  const [gitLiveRepoPath, setGitLiveRepoPath] = useState('')
-  const [gitLiveRefs, setGitLiveRefs] = useState<GitLiveRefsResponse | null>(null)
-  const [gitLiveBaseRef, setGitLiveBaseRef] = useState('main')
-  const [gitLiveTargetRef, setGitLiveTargetRef] = useState('HEAD')
-  const [gitLiveBaseCommits, setGitLiveBaseCommits] = useState<GitLiveCommit[]>([])
-  const [gitLiveTargetCommits, setGitLiveTargetCommits] = useState<GitLiveCommit[]>([])
-  const [gitLiveBaseCommitOverride, setGitLiveBaseCommitOverride] = useState('')
-  const [gitLiveTargetCommitOverride, setGitLiveTargetCommitOverride] = useState('')
-  const [isGitLiveLoading, setIsGitLiveLoading] = useState(false)
-  const [gitLiveError, setGitLiveError] = useState<string | null>(null)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const treeLines = useMemo(() => buildTreeLines(scanResult?.tree ?? null), [scanResult])
   const fileLocByPath = useMemo(() => {
@@ -1829,8 +1792,6 @@ function App() {
     setHighlightOnlyChangedBranchEdges(false)
     setSearchQuery('')
     setHoveredFilePath(null)
-    setIsCanvasLocked(false)
-    setSavedViewport(null)
     setActiveTab('overview')
   }, [scanResult?.rootName])
 
@@ -1854,10 +1815,8 @@ function App() {
         return
       }
       setArchitectureConfig(normalized)
-      setArchitectureConfigDraft(JSON.stringify(normalized, null, 2))
-      setArchitectureConfigError(null)
     } catch {
-      setArchitectureConfigError('Failed to load architecture config preset from localStorage.')
+      // Stored config malformed — keep the default in memory.
     }
   }, [])
 
@@ -2111,71 +2070,6 @@ function App() {
     applyFolderDepthPreset(chosenDepth)
   }
 
-  function applyArchitectureConfigDraft() {
-    try {
-      const parsed = JSON.parse(architectureConfigDraft) as unknown
-      const normalized = normalizeArchitectureConfig(parsed)
-      if (!normalized) {
-        setArchitectureConfigError('Invalid config shape. Check layer names and allowed targets.')
-        return
-      }
-      applyArchitectureConfig(normalized)
-    } catch {
-      setArchitectureConfigError('Invalid JSON format for architecture config.')
-    }
-  }
-
-  function applyArchitectureConfig(nextConfig: ArchitectureConfig) {
-    setArchitectureConfig(nextConfig)
-    setArchitectureConfigDraft(JSON.stringify(nextConfig, null, 2))
-    setArchitectureConfigError(null)
-    if (typeof window !== 'undefined') {
-      window.localStorage.setItem(ARCHITECTURE_STORAGE_KEY, JSON.stringify(nextConfig))
-    }
-  }
-
-  function updateArchitectureAllowedTarget(
-    fromLayer: ArchitectureLayerId,
-    toLayer: ArchitectureLayerId,
-    isAllowed: boolean,
-  ) {
-    const existing = architectureConfig.allowedTargets[fromLayer]
-    const nextTargets = isAllowed
-      ? [...new Set([...existing, toLayer])]
-      : existing.filter((item) => item !== toLayer)
-    if (nextTargets.length === 0) {
-      setArchitectureConfigError(`Layer "${fromLayer}" must allow at least one target layer.`)
-      return
-    }
-    applyArchitectureConfig({
-      ...architectureConfig,
-      allowedTargets: {
-        ...architectureConfig.allowedTargets,
-        [fromLayer]: nextTargets,
-      },
-    })
-  }
-
-  function updateArchitectureMatchers(layer: ArchitectureLayerId, csvValue: string) {
-    const nextMatchers = csvValue
-      .split(',')
-      .map((item) => item.trim().toLowerCase())
-      .filter(Boolean)
-    applyArchitectureConfig({
-      ...architectureConfig,
-      layerMatchers: {
-        ...architectureConfig.layerMatchers,
-        [layer]: [...new Set(nextMatchers)],
-      },
-    })
-  }
-
-  function resetArchitectureConfig() {
-    applyArchitectureConfig(DEFAULT_ARCHITECTURE_CONFIG)
-    if (typeof window !== 'undefined') {
-      window.localStorage.removeItem(ARCHITECTURE_STORAGE_KEY)
-    }
-  }
 
   const collapsibleBlockIds = useMemo(() => {
     const ids = new Set<string>()
@@ -2254,198 +2148,6 @@ function App() {
     downloadTextFile(fileName, buildArchitectureMarkdownReport(architectureReport), 'text/markdown;charset=utf-8')
   }
 
-  function buildGitLiveUrl(path: string, params: Record<string, string>) {
-    const normalizedBase = gitLiveApiBase.trim().replace(/\/+$/, '')
-    const url = new URL(`${normalizedBase}${path}`)
-    for (const [key, value] of Object.entries(params)) {
-      url.searchParams.set(key, value)
-    }
-    return url.toString()
-  }
-
-  async function fetchGitLiveRefs() {
-    if (!gitLiveRepoPath.trim()) {
-      setGitLiveError('Set local git repository path first.')
-      return
-    }
-    setIsGitLiveLoading(true)
-    setGitLiveError(null)
-    try {
-      const response = await fetch(buildGitLiveUrl('/api/git/refs', { repo: gitLiveRepoPath.trim() }))
-      const parsed = (await response.json()) as unknown
-      if (!response.ok) {
-        throw new Error((parsed as { error?: string })?.error ?? `Git live refs error (${response.status}).`)
-      }
-      if (!isGitLiveRefsResponseCandidate(parsed)) {
-        throw new Error('Invalid refs response from git live server.')
-      }
-      setGitLiveRefs(parsed)
-      const fallbackBase = parsed.currentBranch || parsed.branches[0] || 'main'
-      setGitLiveBaseRef(fallbackBase)
-      setGitLiveTargetRef('HEAD')
-      setGitLiveBaseCommitOverride('')
-      setGitLiveTargetCommitOverride('')
-      await Promise.all([fetchGitLiveCommitsFor('base', fallbackBase), fetchGitLiveCommitsFor('target', 'HEAD')])
-    } catch (error) {
-      setGitLiveError(error instanceof Error ? error.message : 'Failed to load refs from git live server.')
-    } finally {
-      setIsGitLiveLoading(false)
-    }
-  }
-
-  async function fetchGitLiveCommitsFor(side: 'base' | 'target', ref: string) {
-    if (!gitLiveRepoPath.trim()) {
-      return
-    }
-    const response = await fetch(buildGitLiveUrl('/api/git/log', { repo: gitLiveRepoPath.trim(), ref, limit: '60' }))
-    const parsed = (await response.json()) as unknown
-    if (!response.ok) {
-      throw new Error((parsed as { error?: string })?.error ?? `Git live log error (${response.status}).`)
-    }
-    if (!isGitLiveLogResponseCandidate(parsed)) {
-      throw new Error('Invalid log response from git live server.')
-    }
-    if (side === 'base') {
-      setGitLiveBaseCommits(parsed.commits)
-    } else {
-      setGitLiveTargetCommits(parsed.commits)
-    }
-  }
-
-  async function refreshGitLiveCommits(side: 'base' | 'target') {
-    const ref = side === 'base' ? gitLiveBaseRef : gitLiveTargetRef
-    setIsGitLiveLoading(true)
-    setGitLiveError(null)
-    try {
-      await fetchGitLiveCommitsFor(side, ref)
-      if (side === 'base') {
-        setGitLiveBaseCommitOverride('')
-      } else {
-        setGitLiveTargetCommitOverride('')
-      }
-    } catch (error) {
-      setGitLiveError(error instanceof Error ? error.message : 'Failed to load commit history from git live server.')
-    } finally {
-      setIsGitLiveLoading(false)
-    }
-  }
-
-  async function runGitLiveCompare() {
-    if (!gitLiveRepoPath.trim()) {
-      setGitLiveError('Set local git repository path first.')
-      return
-    }
-    const base = gitLiveBaseCommitOverride || gitLiveBaseRef
-    const target = gitLiveTargetCommitOverride || gitLiveTargetRef
-    if (!base || !target) {
-      setGitLiveError('Select base and target refs/commits.')
-      return
-    }
-    setIsGitLiveLoading(true)
-    setGitLiveError(null)
-    try {
-      const response = await fetch(buildGitLiveUrl('/api/git/compare', { repo: gitLiveRepoPath.trim(), base, target }))
-      const parsed = (await response.json()) as unknown
-      if (!response.ok) {
-        throw new Error((parsed as { error?: string })?.error ?? `Git live compare error (${response.status}).`)
-      }
-      if (!isGitBranchCompareReportCandidate(parsed)) {
-        throw new Error('Invalid compare response from git live server.')
-      }
-      setGitBranchCompareReport(parsed)
-      setGitBranchCompareReportName(`live:${base}...${target}`)
-      setGitBranchCompareReportError(null)
-      if (branchDiffView === 'off') {
-        setBranchDiffView('all')
-      }
-    } catch (error) {
-      setGitLiveError(error instanceof Error ? error.message : 'Failed to compare refs via git live server.')
-    } finally {
-      setIsGitLiveLoading(false)
-    }
-  }
-
-  async function importBaselineReport(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0]
-    if (!file) {
-      return
-    }
-    try {
-      const raw = await file.text()
-      const parsed = JSON.parse(raw) as unknown
-      if (!isAnalysisExportReportCandidate(parsed)) {
-        setBaselineReportError('Selected file is not a valid analysis report JSON.')
-        setBaselineReport(null)
-        setBaselineReportName(null)
-        return
-      }
-      setBaselineReport(parsed)
-      setBaselineReportName(file.name)
-      setBaselineReportError(null)
-    } catch {
-      setBaselineReportError('Failed to import baseline report (invalid JSON or unreadable file).')
-      setBaselineReport(null)
-      setBaselineReportName(null)
-    } finally {
-      event.target.value = ''
-    }
-  }
-
-  async function importGitChurnReport(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0]
-    if (!file) {
-      return
-    }
-    try {
-      const raw = await file.text()
-      const parsed = JSON.parse(raw) as unknown
-      if (!isGitChurnReportCandidate(parsed)) {
-        setGitChurnReportError('Selected file is not a valid git churn report JSON.')
-        setGitChurnReport(null)
-        setGitChurnReportName(null)
-        return
-      }
-      setGitChurnReport(parsed)
-      setGitChurnReportName(file.name)
-      setGitChurnReportError(null)
-    } catch {
-      setGitChurnReportError('Failed to import git churn report (invalid JSON or unreadable file).')
-      setGitChurnReport(null)
-      setGitChurnReportName(null)
-    } finally {
-      event.target.value = ''
-    }
-  }
-
-  async function importGitBranchCompareReport(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0]
-    if (!file) {
-      return
-    }
-    try {
-      const raw = await file.text()
-      const parsed = JSON.parse(raw) as unknown
-      if (!isGitBranchCompareReportCandidate(parsed)) {
-        setGitBranchCompareReportError('Selected file is not a valid git branch compare report JSON.')
-        setGitBranchCompareReport(null)
-        setGitBranchCompareReportName(null)
-        setBranchDiffView('off')
-        setHighlightOnlyChangedBranchEdges(false)
-        return
-      }
-      setGitBranchCompareReport(parsed)
-      setGitBranchCompareReportName(file.name)
-      setGitBranchCompareReportError(null)
-    } catch {
-      setGitBranchCompareReportError('Failed to import git branch compare report (invalid JSON or unreadable file).')
-      setGitBranchCompareReport(null)
-      setGitBranchCompareReportName(null)
-      setBranchDiffView('off')
-      setHighlightOnlyChangedBranchEdges(false)
-    } finally {
-      event.target.value = ''
-    }
-  }
 
   useEffect(() => {
     if (!flowGraph || graphMode !== 'file-level') {
@@ -2461,24 +2163,6 @@ function App() {
     applyFolderDepthPreset(manualFolderDepth)
   }, [flowGraph, graphMode, autoFolderDepth, manualFolderDepth, folderControlMode])
 
-  useEffect(() => {
-    const handleFullscreenChange = () => {
-      setIsCanvasFullscreen(document.fullscreenElement === canvasShellRef.current)
-    }
-    document.addEventListener('fullscreenchange', handleFullscreenChange)
-    return () => document.removeEventListener('fullscreenchange', handleFullscreenChange)
-  }, [])
-
-  const toggleCanvasFullscreen = () => {
-    const element = canvasShellRef.current
-    if (!element) return
-    if (document.fullscreenElement === element) {
-      void document.exitFullscreen()
-    } else {
-      void element.requestFullscreen()
-    }
-  }
-
   return (
     <main className="app-shell">
       <TabNav activeTab={activeTab} setActiveTab={setActiveTab} />
@@ -2493,10 +2177,6 @@ function App() {
           errorMessage={errorMessage}
           pickButtonLabel={pickButtonLabel}
           handlePickDirectory={handlePickDirectory}
-          overviewStructureMode={overviewStructureMode}
-          setOverviewStructureMode={setOverviewStructureMode}
-          overviewTreemapMetric={overviewTreemapMetric}
-          setOverviewTreemapMetric={setOverviewTreemapMetric}
           fileLocByPath={fileLocByPath}
           treeLines={treeLines}
         />
@@ -2521,49 +2201,15 @@ function App() {
           scanResult={scanResult}
           exportAnalysisReportJson={exportAnalysisReportJson}
           exportAnalysisReportMarkdown={exportAnalysisReportMarkdown}
-          importBaselineReport={importBaselineReport}
           baselineReport={baselineReport}
           setBaselineReport={setBaselineReport}
-          baselineReportName={baselineReportName}
-          setBaselineReportName={setBaselineReportName}
-          baselineReportError={baselineReportError}
-          setBaselineReportError={setBaselineReportError}
           baselineDelta={baselineDelta}
-          importGitChurnReport={importGitChurnReport}
           gitChurnReport={gitChurnReport}
           setGitChurnReport={setGitChurnReport}
-          gitChurnReportName={gitChurnReportName}
-          setGitChurnReportName={setGitChurnReportName}
-          gitChurnReportError={gitChurnReportError}
-          setGitChurnReportError={setGitChurnReportError}
           churnHotFiles={churnHotFiles}
-          gitLiveApiBase={gitLiveApiBase}
-          setGitLiveApiBase={setGitLiveApiBase}
-          gitLiveRepoPath={gitLiveRepoPath}
-          setGitLiveRepoPath={setGitLiveRepoPath}
-          fetchGitLiveRefs={fetchGitLiveRefs}
-          runGitLiveCompare={runGitLiveCompare}
-          isGitLiveLoading={isGitLiveLoading}
-          gitLiveRefs={gitLiveRefs}
-          gitLiveBaseRef={gitLiveBaseRef}
-          setGitLiveBaseRef={setGitLiveBaseRef}
-          gitLiveTargetRef={gitLiveTargetRef}
-          setGitLiveTargetRef={setGitLiveTargetRef}
-          refreshGitLiveCommits={refreshGitLiveCommits}
-          gitLiveBaseCommitOverride={gitLiveBaseCommitOverride}
-          setGitLiveBaseCommitOverride={setGitLiveBaseCommitOverride}
-          gitLiveTargetCommitOverride={gitLiveTargetCommitOverride}
-          setGitLiveTargetCommitOverride={setGitLiveTargetCommitOverride}
-          gitLiveBaseCommits={gitLiveBaseCommits}
-          gitLiveTargetCommits={gitLiveTargetCommits}
-          gitLiveError={gitLiveError}
-          importGitBranchCompareReport={importGitBranchCompareReport}
           gitBranchCompareReport={gitBranchCompareReport}
           setGitBranchCompareReport={setGitBranchCompareReport}
-          gitBranchCompareReportName={gitBranchCompareReportName}
-          setGitBranchCompareReportName={setGitBranchCompareReportName}
-          gitBranchCompareReportError={gitBranchCompareReportError}
-          setGitBranchCompareReportError={setGitBranchCompareReportError}
+          branchDiffView={branchDiffView}
           setBranchDiffView={setBranchDiffView}
           setHighlightOnlyChangedBranchEdges={setHighlightOnlyChangedBranchEdges}
           branchCompareHotFiles={branchCompareHotFiles}
@@ -2599,15 +2245,7 @@ function App() {
           architectureLayerDistribution={architectureLayerDistribution}
           architectureViolationByPair={architectureViolationByPair}
           architectureConfig={architectureConfig}
-          architectureConfigMode={architectureConfigMode}
-          setArchitectureConfigMode={setArchitectureConfigMode}
-          architectureConfigDraft={architectureConfigDraft}
-          setArchitectureConfigDraft={setArchitectureConfigDraft}
-          architectureConfigError={architectureConfigError}
-          applyArchitectureConfigDraft={applyArchitectureConfigDraft}
-          resetArchitectureConfig={resetArchitectureConfig}
-          updateArchitectureMatchers={updateArchitectureMatchers}
-          updateArchitectureAllowedTarget={updateArchitectureAllowedTarget}
+          setArchitectureConfig={setArchitectureConfig}
           exportArchitectureReportJson={exportArchitectureReportJson}
           exportArchitectureReportMarkdown={exportArchitectureReportMarkdown}
           focusViolationOnBoard={focusViolationOnBoard}
@@ -2674,16 +2312,9 @@ function App() {
           matchingFileNodeIds={matchingFileNodeIds}
           isLayouting={isLayouting}
           architectureViolations={architectureViolations}
-          canvasShellRef={canvasShellRef}
-          toggleCanvasFullscreen={toggleCanvasFullscreen}
-          isCanvasFullscreen={isCanvasFullscreen}
           onNodeClick={onNodeClick}
           onNodeMouseEnter={onNodeMouseEnter}
           onNodeMouseLeave={onNodeMouseLeave}
-          isCanvasLocked={isCanvasLocked}
-          setIsCanvasLocked={setIsCanvasLocked}
-          savedViewport={savedViewport}
-          setSavedViewport={setSavedViewport}
           selectedInfoLine={selectedInfoLine}
           hoverInfoLine={hoverInfoLine}
           selectedFilePath={selectedFilePath}

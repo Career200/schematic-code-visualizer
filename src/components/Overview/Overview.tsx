@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import type { BuiltGraph } from '../../lib/graph-builder'
 import type { DependencyGraph, ScannedProject } from '../../lib/models'
 import {
@@ -15,10 +16,6 @@ type OverviewProps = {
   errorMessage: string | null
   pickButtonLabel: () => string
   handlePickDirectory: () => void
-  overviewStructureMode: StructureViewMode
-  setOverviewStructureMode: (mode: StructureViewMode) => void
-  overviewTreemapMetric: TreemapMetricMode
-  setOverviewTreemapMetric: (metric: TreemapMetricMode) => void
   fileLocByPath: Map<string, number>
   treeLines: string[]
 }
@@ -32,13 +29,11 @@ export function Overview({
   errorMessage,
   pickButtonLabel,
   handlePickDirectory,
-  overviewStructureMode,
-  setOverviewStructureMode,
-  overviewTreemapMetric,
-  setOverviewTreemapMetric,
   fileLocByPath,
   treeLines,
 }: OverviewProps) {
+  const [overviewStructureMode, setOverviewStructureMode] = useState<StructureViewMode>('treemap')
+  const [overviewTreemapMetric, setOverviewTreemapMetric] = useState<TreemapMetricMode>('files')
   return (
     <section className="panel grid">
       <div className="stats">
