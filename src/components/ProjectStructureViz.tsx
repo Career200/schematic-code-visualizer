@@ -177,21 +177,43 @@ export function ProjectStructureViz({ tree, mode, treemapMetric, fileValueByPath
   )
   const treemap = useMemo(() => (metricTree ? layoutTreemap(metricTree) : []), [metricTree])
   const dendrogram = useMemo(() => (tree ? layoutDendrogram(tree) : { points: [], links: [] }), [tree])
+  // LOC per path, independent of `treemapMetric` — used for the hover tooltip regardless of what sizes the rects.
+  const locByPath = useMemo(() => {
+    const map = new Map<string, number>()
+    if (!tree || !fileValueByPath) {
+      return map
+    }
+    const walk = (node: MetricNode) => {
+      map.set(node.node.path, node.value)
+      for (const child of node.children) {
+        walk(child)
+      }
+    }
+    walk(buildMetricTree(tree, fileValueByPath))
+    return map
+  }, [tree, fileValueByPath])
 
   if (!tree) {
-    return <div className="overview-viz-empty">Select a folder to render structure view.</div>
+    return (
+      <div className="structure-view-frame">
+        <div className="overview-viz-empty">Select a folder to render structure view.</div>
+      </div>
+    )
   }
 
   if (mode === 'tree') {
     return (
-      <div className="tree">
-        <pre>{treeLines.length > 0 ? treeLines.join('\n') : 'Select a folder to scan.'}</pre>
+      <div className="structure-view-frame">
+        <div className="tree">
+          <pre>{treeLines.length > 0 ? treeLines.join('\n') : 'Select a folder to scan.'}</pre>
+        </div>
       </div>
     )
   }
 
   return (
-    <div className="overview-viz-shell">
+    <div className="structure-view-frame">
+      <div className="overview-viz-shell">
       <svg viewBox={`0 0 ${SVG_WIDTH} ${SVG_HEIGHT}`} className="overview-viz-svg" role="img">
         {mode === 'treemap' ? (
           <>
@@ -206,7 +228,12 @@ export function ProjectStructureViz({ tree, mode, treemapMetric, fileValueByPath
                     width={Math.max(0, rect.width - 1)}
                     height={Math.max(0, rect.height - 1)}
                     className={rect.type === 'directory' ? 'overview-rect-dir' : 'overview-rect-file'}
-                  />
+                  >
+                    <title>
+                      {rect.id}
+                      {locByPath.has(rect.id) ? ` — ${locByPath.get(rect.id)} loc` : ''}
+                    </title>
+                  </rect>
                   {canLabel ? (
                     <text x={rect.x + 6} y={rect.y + 16} fontSize={fontSize} className="overview-viz-label">
                       {rect.label}
@@ -246,6 +273,7 @@ export function ProjectStructureViz({ tree, mode, treemapMetric, fileValueByPath
           </>
         )}
       </svg>
+      </div>
     </div>
   )
 }
