@@ -50,6 +50,12 @@ function App() {
   const [isLayouting, setIsLayouting] = useState(false)
   const [isStructureModalOpen, setIsStructureModalOpen] = useState(false)
   const [isCanvasLocked, setIsCanvasLocked] = useState(false)
+  const [depthSyncSnapshot, setDepthSyncSnapshot] = useState<{
+    flowGraph: ReturnType<typeof buildDependencyFlowGraph> | null
+    graphMode: GraphBuildMode
+    folderDepthMode: FolderDepthMode
+    manualFolderDepth: ManualFolderDepth
+  } | null>(null)
 
   const isDemo = scanResult?.rootName === IS_DEMO_ROOT_NAME
 
@@ -537,7 +543,7 @@ function App() {
 
       const dependencyKind = edge.data?.dependencyKind as DependencyEdge['kind'] | undefined
       const kindColor = dependencyKind === 'type' ? '#b792ff' : dependencyKind === 're-export' ? '#59ccff' : '#7ea3bd'
-      let color = kindColor
+      let color: string
       let strokeWidth = Math.max(Number(edge.style?.strokeWidth ?? 0), 1.4)
       const isCycleColored = String(edge.style?.stroke ?? '').startsWith('#ff')
       const strokeOpacity = 1
@@ -672,7 +678,7 @@ function App() {
         },
       }
     })
-  }, [visibleEdges, busRouteIndex, directRouteContext, routingStyle, selectedNodeId, directionFilter, edgeColorPriority, simplifyHighlightedRoutes])
+  }, [visibleEdges, busRouteIndex, directRouteContext, routingStyle, selectedNodeId, edgeColorPriority, simplifyHighlightedRoutes])
 
   useEffect(() => {
     let isCancelled = false
@@ -710,7 +716,7 @@ function App() {
     return () => {
       isCancelled = true
     }
-  }, [flowGraph])
+  }, [flowGraph, graphMode])
 
   // A new project resets selection/search/collapse state (path-specific), but keeps
   // display preferences (routing style, folder packing, depth mode) as they were.
@@ -866,20 +872,26 @@ function App() {
 
   // Unlike the resets above, this genuinely needs to react to a computed value: `flowGraph`
   // changes for many different reasons (new project, mode toggles, edge filters, ...) and
-  // there's no single call site to hook an imperative reset into — it has to watch.
-  useEffect(() => {
-    if (!flowGraph || graphMode !== 'file-level') {
-      return
+  // there's no single call site to hook an imperative reset into — it has to watch. Adjusted
+  // during render (React's documented pattern for this) rather than in an effect, so the sync
+  // happens before paint instead of causing an extra commit.
+  const depthSyncChanged =
+    depthSyncSnapshot === null ||
+    depthSyncSnapshot.flowGraph !== flowGraph ||
+    depthSyncSnapshot.graphMode !== graphMode ||
+    depthSyncSnapshot.folderDepthMode !== folderDepthMode ||
+    depthSyncSnapshot.manualFolderDepth !== manualFolderDepth
+
+  if (depthSyncChanged) {
+    setDepthSyncSnapshot({ flowGraph, graphMode, folderDepthMode, manualFolderDepth })
+    if (flowGraph && graphMode === 'file-level' && folderDepthMode !== 'manual') {
+      if (folderDepthMode === 'auto') {
+        applyAutoFolderDepth()
+      } else {
+        applyFolderDepthPreset(manualFolderDepth)
+      }
     }
-    if (folderDepthMode === 'manual') {
-      return
-    }
-    if (folderDepthMode === 'auto') {
-      applyAutoFolderDepth()
-      return
-    }
-    applyFolderDepthPreset(manualFolderDepth)
-  }, [flowGraph, graphMode, folderDepthMode, manualFolderDepth])
+  }
 
   const treeLines = useMemo(() => buildTreeLines(scanResult?.tree ?? null), [scanResult])
 

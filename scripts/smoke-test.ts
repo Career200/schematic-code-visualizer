@@ -109,7 +109,7 @@ async function readAliasConfig(repoPath: string): Promise<TsConfigAliasConfig | 
     }
     visited.add(normalizedConfigPath)
 
-    let configText = ''
+    let configText: string
     try {
       configText = await fs.readFile(path.join(repoPath, normalizedConfigPath), 'utf8')
     } catch {

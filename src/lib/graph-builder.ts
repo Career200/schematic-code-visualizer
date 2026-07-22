@@ -791,7 +791,7 @@ function detectCycleNodeIds(nodeIds: string[], edges: Array<{ source: string; ta
 
     if ((lowByNode.get(nodeId) ?? -1) === (indexByNode.get(nodeId) ?? -2)) {
       const component: string[] = []
-      let popped = ''
+      let popped: string
       do {
         popped = stack.pop() ?? ''
         if (popped) {

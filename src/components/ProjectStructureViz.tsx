@@ -135,7 +135,7 @@ function layoutDendrogram(root: TreeNode) {
 
   function walk(node: TreeNode, depth: number): { x: number; y: number } {
     const children = node.children ?? []
-    let x = PADDING
+    let x: number
     if (children.length === 0) {
       x = PADDING + leafIndex * xStep
       leafIndex += 1
