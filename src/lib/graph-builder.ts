@@ -74,7 +74,6 @@ function buildExternalBlock(dependencyGraph: DependencyGraph): { block: Node; ch
       id: `file:${path}`,
       type: 'chipFile',
       parentId: EXTERNAL_BLOCK_ID,
-      extent: 'parent',
       sourcePosition: Position.Right,
       targetPosition: Position.Left,
       position: {
@@ -475,7 +474,6 @@ function createHierarchicalFileLevelNodes(
       type: 'folderBlock',
       position,
       parentId,
-      extent: parentId ? 'parent' : undefined,
       data: {
         label: `${folder.label} (${folder.filePaths.length + folder.childFolderIds.length})`,
         importCount: importCountByFolder.get(folder.id) ?? 0,
@@ -516,7 +514,6 @@ function createHierarchicalFileLevelNodes(
         id: fileNodeId,
         type: 'chipFile',
         parentId: folder.id,
-        extent: 'parent',
         sourcePosition: Position.Right,
         targetPosition: Position.Left,
         position: {
@@ -629,7 +626,6 @@ function createTopLevelFileNodes(
         id: `file:${filePath}`,
         type: 'chipFile',
         parentId: block.id,
-        extent: 'parent',
         sourcePosition: Position.Right,
         targetPosition: Position.Left,
         position: {
@@ -795,7 +791,7 @@ function detectCycleNodeIds(nodeIds: string[], edges: Array<{ source: string; ta
 
     if ((lowByNode.get(nodeId) ?? -1) === (indexByNode.get(nodeId) ?? -2)) {
       const component: string[] = []
-      let popped = ''
+      let popped: string
       do {
         popped = stack.pop() ?? ''
         if (popped) {
