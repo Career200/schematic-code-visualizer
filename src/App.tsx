@@ -24,6 +24,7 @@ import type { EdgeColorPriority, EdgeKindFilter, FolderDepthMode, ManualFolderDe
 
 import { findTopCycleGroups } from './utils/find-top-cycle-groups'
 import { getFolderDepth } from './utils/get-folder-depth'
+import { hashText } from './utils/hash-text'
 
 const initialDemoProject = buildDemoProject()
 
@@ -116,6 +117,83 @@ function App() {
       5,
     )
   }, [dependencyGraph])
+  // Runtime in/out edge counts per file, separate from `incoming/outgoingEdgeCountByPath` above
+  // (those count all edge kinds; orphan detection specifically cares about runtime-only isolation).
+  const runtimeEdgeCountByPath = useMemo(() => {
+    const map = new Map<string, { incoming: number; outgoing: number }>()
+    const ensure = (path: string) => {
+      const existing = map.get(path)
+      if (existing) return existing
+      const created = { incoming: 0, outgoing: 0 }
+      map.set(path, created)
+      return created
+    }
+    for (const edge of dependencyGraph?.edges ?? []) {
+      if (edge.kind !== 'runtime') continue
+      ensure(edge.fromPath).outgoing += 1
+      ensure(edge.toPath).incoming += 1
+    }
+    return map
+  }, [dependencyGraph])
+  const orphanRuntimeModules = useMemo(() => {
+    if (!dependencyGraph) {
+      return []
+    }
+    return dependencyGraph.files
+      .filter((file) => {
+        const lower = file.path.toLowerCase()
+        if (lower.includes('/__tests__/') || lower.includes('.test.') || lower.includes('.spec.')) {
+          return false
+        }
+        const runtime = runtimeEdgeCountByPath.get(file.path)
+        return (runtime?.incoming ?? 0) === 0 && (runtime?.outgoing ?? 0) === 0
+      })
+      .map((file) => ({ path: file.path, exports: file.exports.length }))
+      .sort((left, right) => right.exports - left.exports || left.path.localeCompare(right.path))
+      .slice(0, 12)
+  }, [dependencyGraph, runtimeEdgeCountByPath])
+  const duplicateUtilityGroups = useMemo(() => {
+    if (!scanResult || scanResult.files.length === 0) {
+      return []
+    }
+    const groups = new Map<string, { baseName: string; paths: string[] }>()
+    for (const file of scanResult.files) {
+      const normalizedPath = file.path.toLowerCase()
+      const isUtilityPath =
+        normalizedPath.includes('/utils/') ||
+        normalizedPath.includes('/helpers/') ||
+        normalizedPath.includes('/common/') ||
+        normalizedPath.includes('/shared/') ||
+        normalizedPath.includes('/lib/') ||
+        normalizedPath.includes('/hooks/') ||
+        normalizedPath.endsWith('.util.ts') ||
+        normalizedPath.endsWith('.utils.ts')
+      if (!isUtilityPath) {
+        continue
+      }
+      const fileName = file.path.split('/').pop() ?? file.path
+      const normalizedContent = file.content
+        .replace(/\/\*[\s\S]*?\*\//g, '')
+        .replace(/\/\/.*$/gm, '')
+        .replace(/\s+/g, ' ')
+        .trim()
+      if (!normalizedContent) {
+        continue
+      }
+      const key = `${fileName.toLowerCase()}::${hashText(normalizedContent)}`
+      const existing = groups.get(key)
+      if (existing) {
+        existing.paths.push(file.path)
+      } else {
+        groups.set(key, { baseName: fileName, paths: [file.path] })
+      }
+    }
+    return [...groups.values()]
+      .filter((item) => item.paths.length > 1)
+      .map((item) => ({ baseName: item.baseName, paths: [...item.paths].sort((left, right) => left.localeCompare(right)) }))
+      .sort((left, right) => right.paths.length - left.paths.length || left.baseName.localeCompare(right.baseName))
+      .slice(0, 12)
+  }, [scanResult])
   const flowGraph = useMemo(() => {
     if (!scanResult || !dependencyGraph) {
       return null
@@ -880,6 +958,8 @@ function App() {
           hotspotFiles={hotspotFiles}
           topCycleGroups={topCycleGroups}
           potentiallyDeadExportFiles={potentiallyDeadExportFiles}
+          orphanRuntimeModules={orphanRuntimeModules}
+          duplicateUtilityGroups={duplicateUtilityGroups}
           selectedNodeId={selectedNodeId}
           selectedFilePath={selectedFilePath}
           selectedImportedFiles={selectedImportedFiles}

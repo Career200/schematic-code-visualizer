@@ -61,8 +61,6 @@ button:disabled {
   color: #ffc3c3;
 }
 
-/* Top bar */
-
 .top-bar {
   position: fixed;
   top: 0;
@@ -154,8 +152,6 @@ button:disabled {
   margin: 6px 0 0;
 }
 
-/* Board canvas */
-
 .board-canvas-shell {
   position: fixed;
   inset: 0;
@@ -190,11 +186,6 @@ button:disabled {
   pointer-events: none;
 }
 
-/* Floating settings / insights panels.
-   Each side is a fixed-position flex row: the card (settings/insights) plus a side
-   tool (nav wheel / minimap) as a DOM sibling, so the tool naturally slides along
-   with the card's width when it collapses/expands — no state syncing needed. */
-
 .overlay-group {
   position: fixed;
   top: 66px;
@@ -203,6 +194,12 @@ button:disabled {
   display: flex;
   align-items: flex-end;
   gap: 12px;
+  pointer-events: none;
+}
+
+.overlay-card,
+.overlay-side-tool {
+  pointer-events: auto;
 }
 
 .overlay-group-left {
@@ -401,8 +398,6 @@ button:disabled {
   background: #59ccff;
 }
 
-/* Structure modal */
-
 .modal-backdrop {
   position: fixed;
   inset: 0;
@@ -473,7 +468,7 @@ button:disabled {
 
 .modal-close-btn::before,
 .modal-close-btn::after {
-  content: '';
+  content: "";
   position: absolute;
   top: 50%;
   left: 50%;
@@ -491,8 +486,6 @@ button:disabled {
   transform: translate(-50%, -50%) rotate(-45deg);
 }
 
-/* Fixed height so switching between treemap/dendrogram/tree never resizes the modal —
-   each view mode fills this box instead of driving its own height. */
 .structure-view-frame {
   height: 60vh;
   min-height: 380px;
@@ -572,8 +565,6 @@ button:disabled {
   line-height: 1.4;
 }
 
-/* Shared list styles (insights, selected file) */
-
 .section-card {
   border: 1px solid rgba(96, 136, 173, 0.42);
   border-radius: 10px;
@@ -641,7 +632,7 @@ button:disabled {
   max-height: 160px;
   overflow: auto;
   font-size: 0.8rem;
-  font-family: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
 .canvas-selected-io-col li {
@@ -824,7 +815,11 @@ button:disabled {
   align-items: stretch;
   border-radius: 8px;
   overflow: hidden;
-  background: linear-gradient(180deg, rgba(20, 68, 101, 0.9), rgba(11, 40, 63, 0.9));
+  background: linear-gradient(
+    180deg,
+    rgba(20, 68, 101, 0.9),
+    rgba(11, 40, 63, 0.9)
+  );
 }
 
 .chip-body {

@@ -18,10 +18,22 @@ export type DeadExportFile = {
   exports: string[]
 }
 
+export type OrphanRuntimeModule = {
+  path: string
+  exports: number
+}
+
+export type DuplicateUtilityGroup = {
+  baseName: string
+  paths: string[]
+}
+
 export type InsightsPanelProps = {
   hotspotFiles: HotspotFile[]
   topCycleGroups: CycleGroupSummary[]
   potentiallyDeadExportFiles: DeadExportFile[]
+  orphanRuntimeModules: OrphanRuntimeModule[]
+  duplicateUtilityGroups: DuplicateUtilityGroup[]
 
   selectedNodeId: string | null
   selectedFilePath: string | null

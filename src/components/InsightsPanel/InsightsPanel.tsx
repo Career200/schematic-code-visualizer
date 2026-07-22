@@ -11,6 +11,8 @@ function InsightsPanelImpl({
   hotspotFiles,
   topCycleGroups,
   potentiallyDeadExportFiles,
+  orphanRuntimeModules,
+  duplicateUtilityGroups,
   selectedNodeId,
   selectedFilePath,
   selectedImportedFiles,
@@ -75,6 +77,38 @@ function InsightsPanelImpl({
                     <li key={`dead-${file.path}`}>
                       <code>{file.path}</code>
                       <span className="insight-meta">{file.exports.length} unused export(s)</span>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="canvas-selected-io-empty">none</p>
+              )}
+            </div>
+
+            <div className="section-card">
+              <h2>Orphan runtime modules</h2>
+              {orphanRuntimeModules.length > 0 ? (
+                <ul className="quick-action-list">
+                  {orphanRuntimeModules.map((item) => (
+                    <li key={`orphan-${item.path}`}>
+                      <code>{item.path}</code>
+                      <span className="insight-meta">{item.exports} export(s), no runtime edges</span>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="canvas-selected-io-empty">none</p>
+              )}
+            </div>
+
+            <div className="section-card">
+              <h2>Duplicate utilities</h2>
+              {duplicateUtilityGroups.length > 0 ? (
+                <ul className="quick-action-list">
+                  {duplicateUtilityGroups.map((group) => (
+                    <li key={`dup-${group.baseName}-${group.paths[0]}`}>
+                      <span className="insight-meta">{group.baseName} — {group.paths.length} copies</span>
+                      <code>{group.paths.join(', ')}</code>
                     </li>
                   ))}
                 </ul>
